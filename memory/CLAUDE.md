@@ -8,7 +8,7 @@
 | [storage/](storage/) | MemoryStorage | 1 | ✅ 完成 |
 | [vector_store/](vector_store/) | VectorStore | 1 | ✅ 完成 |
 | [analyzer/](analyzer/) | ImportanceAnalyzer | 1 | ✅ 完成 |
-| [compressor/](compressor/) | DialogueCompressor | 2 | 重构中 |
+| [compressor/](compressor/) | DialogueCompressor | 2 | ✅ 完成 |
 | [migration/](migration/) | MigrationModule | 2 | 稳定 |
 | context_injector.py | ContextInjector | 3 | 重构中（有已知 bug） |
 | [scheduler/](scheduler/) | Scheduler | 4 | 重构中 |

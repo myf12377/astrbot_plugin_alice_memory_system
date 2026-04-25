@@ -2,7 +2,7 @@
 
 L1 原始对话 / L2 双路中期记忆 / L3 长期向量记忆（衰减模型）。
 
-重构中 — 当前 A3 阶段：PluginConfig + Identity + Storage + VectorStore + Analyzer 已接入。
+重构中 — 当前 B1 阶段：Layer 1 完成 + Compressor 已接入。
 """
 
 from astrbot.api import logger
@@ -11,6 +11,7 @@ from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star
 
 from .memory.analyzer.analyzer import ImportanceAnalyzer
+from .memory.compressor.compressor import DialogueCompressor
 from .memory.identity.identity import IdentityModule
 from .memory.plugin_config import PluginConfig
 from .memory.storage.storage import MemoryStorage
@@ -52,11 +53,16 @@ class AliceMemoryPlugin(Star):
         )
 
         # Layer 1 全部完成
-        # TODO: Layer 2: DialogueCompressor / MigrationModule
+
+        # Layer 2: 压缩器
+        self._compressor = DialogueCompressor(context, self._storage, self.plugin_config)
+        logger.info("[AliceMemory] 压缩器就绪 | Compressor ✓")
+
+        # TODO: Layer 2: MigrationModule
         # TODO: Layer 3: ContextInjector
         # TODO: Layer 4: Scheduler
 
-        logger.info("[AliceMemory] 插件初始化完成（A3）")
+        logger.info("[AliceMemory] 插件初始化完成（B1）")
 
     # =========================================================================
     # LLM 钩子

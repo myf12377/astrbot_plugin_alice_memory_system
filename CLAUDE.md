@@ -41,7 +41,7 @@ astrbot_alice_memory_modul/
 │   ├── storage/                   # ✅ JSON 持久化（第1层）— A1 完成
 │   ├── vector_store/              # ✅ ChromaDB 向量（第1层）— A2 完成
 │   ├── analyzer/                  # ✅ LLM 重要性分析（第1层）— A3 完成
-│   ├── compressor/                # Path A/B 压缩（第2层）
+│   ├── compressor/                # ✅ Path A/B 压缩（第2层）— B1 完成
 │   ├── scheduler/                 # 5段定时调度（第4层）
 │   └── migration/                 # 导入导出 [稳定]
 ```

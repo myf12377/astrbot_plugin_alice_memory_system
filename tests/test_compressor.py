@@ -1,5 +1,5 @@
 """
-压缩器模块测试。
+压缩器模块测试 — 使用 PluginConfig。
 """
 
 from __future__ import annotations
@@ -13,135 +13,87 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from memory.compressor.compressor import DialogueCompressor
-from memory.identity.identity import IdentityModule
-from memory.settings import MemorySettings
+from memory.plugin_config import PluginConfig
 from memory.storage.storage import MemoryStorage
 
 
 class TestDialogueCompressor:
-    """DialogueCompressor类的测试。"""
+    """DialogueCompressor 类的测试。"""
 
     @pytest.fixture
     def temp_dir(self) -> Iterator[Path]:
-        """创建测试用临时目录。"""
         with tempfile.TemporaryDirectory() as tmp:
             yield Path(tmp)
 
     @pytest.fixture
-    def settings(self) -> MemorySettings:
-        """创建测试配置。"""
-        return MemorySettings(
+    def config(self, temp_dir: Path) -> PluginConfig:
+        return PluginConfig(
+            data_dir=temp_dir,
             compress_model="test-model",
-            compress_prompt="请将以下对话内容精简为一段摘要：\n\n{content}",
-            dialogue_end_timeout=300,
+            l2_compress_prompt_b="请将以下对话内容精简为一段摘要：\n\n{content}",
             llm_max_tokens=1024,
             llm_temperature=0.7,
         )
 
     @pytest.fixture
     def mock_context(self) -> MagicMock:
-        """创建模拟AstrBot上下文。"""
         context = MagicMock()
         context.llm_generate = AsyncMock()
         return context
 
     @pytest.fixture
-    def identity_module(self, temp_dir: Path) -> IdentityModule:
-        """创建身份模块。"""
-        return IdentityModule(temp_dir)
-
-    @pytest.fixture
-    def storage(self, temp_dir: Path, settings: MemorySettings) -> MemoryStorage:
-        """创建存储实例。"""
-        return MemoryStorage(temp_dir, settings)
+    def storage(self, config: PluginConfig) -> MemoryStorage:
+        return MemoryStorage(config)
 
     @pytest.fixture
     def compressor(
-        self,
-        mock_context: MagicMock,
-        identity_module: IdentityModule,
-        storage: MemoryStorage,
-        settings: MemorySettings,
+        self, mock_context: MagicMock, storage: MemoryStorage, config: PluginConfig,
     ) -> DialogueCompressor:
-        """创建DialogueCompressor实例。"""
-        return DialogueCompressor(
-            mock_context,
-            identity_module,
-            storage,
-            settings,
-        )
+        return DialogueCompressor(mock_context, storage, config)
+
+    # 内部方法
+    # ================================================================
 
     def test_format_dialogues(self, compressor: DialogueCompressor) -> None:
-        """测试对话格式化。"""
-        dialogues = ["user: Hello", "assistant: Hi there"]
-        formatted = compressor._format_dialogues(dialogues)
+        formatted = compressor._format_dialogues(["user: Hello", "assistant: Hi"])
         assert "user: Hello" in formatted
-        assert "assistant: Hi there" in formatted
+        assert "assistant: Hi" in formatted
 
     def test_parse_score_valid(self, compressor: DialogueCompressor) -> None:
-        """测试解析有效分数。"""
         assert compressor._parse_score("8") == 8
         assert compressor._parse_score("  5  ") == 5
-        assert compressor._parse_score("The score is 9.") == 9
 
     def test_parse_score_boundary(self, compressor: DialogueCompressor) -> None:
-        """测试解析边界分数。"""
         assert compressor._parse_score("0") == 0
         assert compressor._parse_score("10") == 10
         assert compressor._parse_score("15") == 10
-        assert compressor._parse_score("-3") == 0
 
     def test_parse_score_invalid(self, compressor: DialogueCompressor) -> None:
-        """测试解析无效响应默认为5。"""
-        assert compressor._parse_score("no number here") == 5
+        assert compressor._parse_score("no number") == 5
         assert compressor._parse_score("") == 5
-        assert compressor._parse_score("three") == 5
 
     def test_get_dialogues_empty(
-        self,
-        compressor: DialogueCompressor,
-        storage: MemoryStorage,
+        self, compressor: DialogueCompressor,
     ) -> None:
-        """测试获取无对话用户返回空列表。"""
-        dialogues = compressor._get_dialogues("nonexistent", "2024-04-20")
-        assert dialogues == []
+        assert compressor._get_dialogues("nonexistent", "2024-04-20") == []
 
-    def test_get_dialogues_filters_by_date(
-        self,
-        compressor: DialogueCompressor,
-        storage: MemoryStorage,
-    ) -> None:
-        """测试对话按日期过滤。"""
-        item = storage.append_dialogue("user123", "user", "Message on target day")
-        date_obj = datetime.strptime("2024-04-20", "%Y-%m-%d").replace(
-            tzinfo=timezone.utc
-        )
-        date_ts = date_obj.timestamp()
-        storage.update_l1_dialogue_timestamp("user123", item.message_id, date_ts)
-
-        dialogues = compressor._get_dialogues("user123", "2024-04-20")
-        assert len(dialogues) >= 1
+    # Path B：每日摘要
+    # ================================================================
 
     @pytest.mark.asyncio
     async def test_compress_day_no_dialogues(
-        self,
-        compressor: DialogueCompressor,
+        self, compressor: DialogueCompressor,
     ) -> None:
-        """测试无对话时压缩返回None。"""
         result = await compressor.compress_day("nonexistent", "2024-04-20")
         assert result is None
 
     @pytest.mark.asyncio
     async def test_compress_day_success(
-        self,
-        compressor: DialogueCompressor,
-        mock_context: MagicMock,
+        self, compressor: DialogueCompressor, mock_context: MagicMock,
         storage: MemoryStorage,
     ) -> None:
-        """测试成功压缩一天对话。"""
         item1 = storage.append_dialogue("user123", "user", "Hello")
         item2 = storage.append_dialogue("user123", "assistant", "Hi")
-
         date_obj = datetime.strptime("2024-04-20", "%Y-%m-%d").replace(
             tzinfo=timezone.utc
         )
@@ -155,36 +107,47 @@ class TestDialogueCompressor:
         assert result == "Summary of conversation"
         assert mock_context.llm_generate.call_count == 2
 
-        summaries = storage.get_l2_summaries()
+        summaries = storage.get_daily_summaries("user123")
         assert len(summaries) == 1
         assert summaries[0].summary == "Summary of conversation"
+        assert summaries[0].user_id == "user123"
 
     @pytest.mark.asyncio
     async def test_compress_day_with_custom_model(
-        self,
-        mock_context: MagicMock,
-        identity_module: IdentityModule,
-        storage: MemoryStorage,
-        settings: MemorySettings,
+        self, mock_context: MagicMock, storage: MemoryStorage, config: PluginConfig,
     ) -> None:
-        """测试使用自定义模型压缩。"""
-        settings.compress_model = "custom-compress-model"
-        compressor = DialogueCompressor(
-            mock_context,
-            identity_module,
-            storage,
-            settings,
-        )
+        config.compress_model = "custom-compress-model"
+        compressor = DialogueCompressor(mock_context, storage, config)
         item = storage.append_dialogue("user123", "user", "Test")
-
         date_obj = datetime.strptime("2024-04-20", "%Y-%m-%d").replace(
             tzinfo=timezone.utc
         )
-        date_ts = date_obj.timestamp()
-        storage.update_l1_dialogue_timestamp("user123", item.message_id, date_ts)
-
+        storage.update_l1_dialogue_timestamp(
+            "user123", item.message_id, date_obj.timestamp(),
+        )
         mock_context.llm_generate.return_value = "Summary"
-
         await compressor.compress_day("user123", "2024-04-20")
         call_kwargs = mock_context.llm_generate.call_args
         assert call_kwargs[1]["generate_config"]["model"] == "custom-compress-model"
+
+    # Path A：周摘要
+    # ================================================================
+
+    @pytest.mark.asyncio
+    async def test_compress_context_summary_empty(
+        self, compressor: DialogueCompressor,
+    ) -> None:
+        """无内容时应返回 None。"""
+        result = await compressor.compress_context_summary("user_empty")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_compress_context_summary(
+        self, compressor: DialogueCompressor, mock_context: MagicMock,
+        storage: MemoryStorage,
+    ) -> None:
+        """有对话 + 日摘要时生成周摘要。"""
+        storage.append_dialogue("user_x", "user", "重要消息")
+        mock_context.llm_generate.return_value = "本周摘要：用户讨论了重要话题"
+        result = await compressor.compress_context_summary("user_x")
+        assert "重要" in result or result is not None

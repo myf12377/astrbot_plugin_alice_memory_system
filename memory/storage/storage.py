@@ -285,6 +285,19 @@ class MemoryStorage:
             return True
         return False
 
+    def update_l1_dialogue_timestamp(
+        self, user_id: str, message_id: str, timestamp: float,
+    ) -> bool:
+        """更新单条 L1 对话的时间戳（供测试用）。"""
+        path = self._get_l1_path(user_id)
+        data = self._load_json(path)
+        for item in data:
+            if item.get("message_id") == message_id:
+                item["timestamp"] = timestamp
+                self._save_json(path, data)
+                return True
+        return False
+
     def delete_old_l1_dialogues(
         self, user_id: str, retention_days: int | None = None,
     ) -> int:
