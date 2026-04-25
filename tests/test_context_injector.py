@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from astrbot.api.provider import ProviderRequest
+from astrbot.core.agent.message import TextPart
 from memory.context_injector import ContextInjector, L2_PATH_A_MARKER, L2_PATH_B_MARKER, L3_MARKER
 from memory.plugin_config import PluginConfig
 from memory.storage.storage import L1MemoryItem, L2SummaryItem
@@ -186,9 +187,9 @@ class TestContextInjector:
     def test_clean_marker(self, injector: ContextInjector) -> None:
         req = self.make_request()
         req.extra_user_content_parts = [
-            {"type": "text", "text": f"{L2_PATH_A_MARKER}\n旧周摘要"},
-            {"type": "text", "text": "其他内容"},
+            TextPart(text=f"{L2_PATH_A_MARKER}\n旧周摘要"),
+            TextPart(text="其他内容"),
         ]
         injector._clean_marker(req, L2_PATH_A_MARKER)
         assert len(req.extra_user_content_parts) == 1
-        assert req.extra_user_content_parts[0]["text"] == "其他内容"
+        assert req.extra_user_content_parts[0].text == "其他内容"

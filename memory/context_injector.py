@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from astrbot.api.provider import ProviderRequest
+from astrbot.core.agent.message import TextPart
 
 if TYPE_CHECKING:
     from memory.identity.identity import IdentityModule
@@ -100,10 +101,9 @@ class ContextInjector:
             return
 
         self._clean_marker(request, L2_PATH_A_MARKER)
-        request.extra_user_content_parts.append({
-            "type": "text",
-            "text": f"{L2_PATH_A_MARKER}\n本周摘要：{weekly['summary']}",
-        })
+        request.extra_user_content_parts.append(
+            TextPart(text=f"{L2_PATH_A_MARKER}\n本周摘要：{weekly['summary']}"),
+        )
 
     # ==================================================================
     # L2 Path B — 每日磁盘摘要
@@ -126,10 +126,9 @@ class ContextInjector:
             return
 
         self._clean_marker(request, L2_PATH_B_MARKER)
-        request.extra_user_content_parts.append({
-            "type": "text",
-            "text": f"{L2_PATH_B_MARKER}\n{combined}",
-        })
+        request.extra_user_content_parts.append(
+            TextPart(text=f"{L2_PATH_B_MARKER}\n{combined}"),
+        )
 
     # ==================================================================
     # L3 — 长期向量记忆
@@ -159,10 +158,9 @@ class ContextInjector:
             if similarity >= threshold:
                 content = r.get("content", "")
                 if content:
-                    request.extra_user_content_parts.append({
-                        "type": "text",
-                        "text": f"{L3_MARKER}\n{content}",
-                    })
+                    request.extra_user_content_parts.append(
+                        TextPart(text=f"{L3_MARKER}\n{content}"),
+                    )
 
     # ==================================================================
     # 工具
@@ -177,5 +175,5 @@ class ContextInjector:
         """移除 extra_user_content_parts 中以指定 marker 开头的旧内容。"""
         request.extra_user_content_parts = [
             p for p in request.extra_user_content_parts
-            if not str(p.get("text", "") if isinstance(p, dict) else getattr(p, "text", "")).startswith(marker)
+            if not getattr(p, "text", "").startswith(marker)
         ]
