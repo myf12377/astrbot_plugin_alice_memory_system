@@ -149,6 +149,7 @@ class DialogueCompressor:
 
     async def _call_llm(self, prompt: str) -> str:
         kwargs: dict[str, Any] = {
+            "chat_provider_id": self._context.get_current_chat_provider_id(),
             "max_tokens": self._config.llm_max_tokens,
             "temperature": self._config.llm_temperature,
         }

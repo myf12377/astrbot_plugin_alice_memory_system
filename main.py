@@ -292,12 +292,13 @@ class AliceMemoryPlugin(Star):
             try:
                 prompt = self.plugin_config.manual_compress_llm_prompt
                 kwargs = {
+                    "chat_provider_id": self.context.get_current_chat_provider_id(),
                     "max_tokens": self.plugin_config.llm_max_tokens,
                     "temperature": self.plugin_config.llm_temperature,
                 }
                 if self.plugin_config.compress_model:
                     kwargs["model"] = self.plugin_config.compress_model
-                feedback = await self._analyzer._context.llm_generate(
+                feedback = await self.context.llm_generate(
                     prompt=prompt, **kwargs,
                 )
                 return feedback.strip()
