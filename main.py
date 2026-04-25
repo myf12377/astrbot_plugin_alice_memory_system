@@ -2,7 +2,7 @@
 
 L1 原始对话 / L2 双路中期记忆 / L3 长期向量记忆（衰减模型）。
 
-重构中 — 当前 B2 阶段：全链路贯通（存储→压缩→注入）。
+重构中 — 当前 C1 阶段：定时调度已接入。
 """
 
 from astrbot.api import logger
@@ -14,6 +14,7 @@ from .memory.analyzer.analyzer import ImportanceAnalyzer
 from .memory.compressor.compressor import DialogueCompressor
 from .memory.context_injector import ContextInjector
 from .memory.identity.identity import IdentityModule
+from .memory.scheduler.scheduler import Scheduler
 from .memory.plugin_config import PluginConfig
 from .memory.storage.storage import MemoryStorage
 from .memory.vector_store.vector_store import VectorStore
@@ -64,10 +65,17 @@ class AliceMemoryPlugin(Star):
         )
         logger.info("[AliceMemory] 模块就绪 | Compressor ✓ | ContextInjector ✓")
 
-        # TODO: Layer 2: MigrationModule
-        # TODO: Layer 4: Scheduler
+        # Layer 4: 调度器
+        self._scheduler = Scheduler(
+            context, self._storage, self._identity, self._vector_store,
+            self.plugin_config, self._compressor, self._analyzer,
+        )
+        self._scheduler.start()
+        logger.info("[AliceMemory] 定时调度就绪 | Scheduler ✓")
 
-        logger.info("[AliceMemory] 插件初始化完成（B2）— 全链路贯通")
+        # TODO: Layer 2: MigrationModule
+
+        logger.info("[AliceMemory] 插件初始化完成（C1）")
 
     # =========================================================================
     # LLM 钩子

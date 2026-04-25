@@ -1,5 +1,5 @@
 """
-调度器模块测试。
+调度器模块测试 — 使用 PluginConfig。
 """
 
 from __future__ import annotations
@@ -12,117 +12,115 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from memory.identity.identity import IdentityModule
+from memory.plugin_config import PluginConfig
 from memory.scheduler.scheduler import Scheduler
-from memory.settings import MemorySettings
 from memory.storage.storage import MemoryStorage
 
 
 class TestScheduler:
-    """Scheduler类的测试。"""
+    """Scheduler 类的测试。"""
 
     @pytest.fixture
     def temp_dir(self) -> Iterator[Path]:
-        """创建测试用临时目录。"""
         with tempfile.TemporaryDirectory() as tmp:
             yield Path(tmp)
 
     @pytest.fixture
-    def settings(self) -> MemorySettings:
-        """创建测试配置。"""
-        return MemorySettings(
-            l1_ttl=7,
+    def config(self, temp_dir: Path) -> PluginConfig:
+        return PluginConfig(
+            data_dir=temp_dir,
+            l1_retention_days=3,
             l2_ttl=7,
-            l3_recheck_interval=30,
-            llm_max_tokens=1024,
-            llm_temperature=0.7,
+            l3_merge_interval_days=30,
+            l2_path_a_enabled=True,
+            l2_path_b_enabled=True,
+            l1_enabled=True,
+            l3_enabled=True,
         )
 
     @pytest.fixture
     def mock_context(self) -> MagicMock:
-        """创建模拟AstrBot上下文。"""
         context = MagicMock()
         context.cron_manager = MagicMock()
-        context.llm_generate = AsyncMock()
+        context.cron_manager.add_basic_job = MagicMock()
         return context
 
     @pytest.fixture
+    def mock_compressor(self) -> MagicMock:
+        c = MagicMock()
+        c.compress_day = AsyncMock()
+        c.compress_context_summary = AsyncMock()
+        return c
+
+    @pytest.fixture
+    def mock_analyzer(self) -> MagicMock:
+        a = MagicMock()
+        a.batch_recheck = AsyncMock(return_value=[])
+        return a
+
+    @pytest.fixture
     def identity_module(self, temp_dir: Path) -> IdentityModule:
-        """创建身份模块。"""
         return IdentityModule(temp_dir)
 
     @pytest.fixture
-    def storage(self, temp_dir: Path, settings: MemorySettings) -> MemoryStorage:
-        """创建存储实例。"""
-        return MemoryStorage(temp_dir, settings)
+    def storage(self, config: PluginConfig) -> MemoryStorage:
+        return MemoryStorage(config)
 
     @pytest.fixture
     def scheduler(
-        self,
-        mock_context: MagicMock,
-        identity_module: IdentityModule,
-        storage: MemoryStorage,
-        settings: MemorySettings,
+        self, mock_context, storage, identity_module, config,
+        mock_compressor, mock_analyzer,
     ) -> Scheduler:
-        """创建Scheduler实例。"""
         return Scheduler(
-            mock_context,
-            storage,
-            identity_module,
-            None,  # vector_store
-            settings,
+            mock_context, storage, identity_module,
+            None, config, mock_compressor, mock_analyzer,
         )
 
-    def test_register_tasks(
-        self,
-        scheduler: Scheduler,
-        mock_context: MagicMock,
-    ) -> None:
-        """测试任务注册。"""
-        scheduler.register_tasks()
-        assert mock_context.cron_manager.add_basic_job.call_count == 3
+    # 注册
+    # ================================================================
 
-    def test_register_tasks_no_cron_manager(
-        self,
-        identity_module: IdentityModule,
-        storage: MemoryStorage,
-        settings: MemorySettings,
+    def test_start_registers_5_tasks(
+        self, scheduler: Scheduler, mock_context: MagicMock,
     ) -> None:
-        """测试无cron_manager时不注册任务（静默返回，不抛异常）。"""
-        mock_context = MagicMock()
-        mock_context.cron_manager = None
-        scheduler = Scheduler(
-            mock_context,
-            storage,
-            identity_module,
-            None,
-            settings,
-        )
-        # 应该静默返回，不抛异常
-        scheduler.register_tasks()
+        scheduler.start()
+        assert mock_context.cron_manager.add_basic_job.call_count == 5
+
+    def test_start_no_cron_manager(
+        self, storage, identity_module, config, mock_compressor, mock_analyzer,
+    ) -> None:
+        mock_ctx = MagicMock()
+        mock_ctx.cron_manager = None
+        s = Scheduler(mock_ctx, storage, identity_module, None, config,
+                       mock_compressor, mock_analyzer)
+        s.start()  # 静默返回，不抛异常
+
+    # Path B 日压缩
+    # ================================================================
 
     @pytest.mark.asyncio
-    async def test_cleanup_l1(
-        self,
-        scheduler: Scheduler,
+    async def test_compress_daily(
+        self, scheduler: Scheduler, identity_module: IdentityModule,
+        mock_compressor: MagicMock,
     ) -> None:
-        """测试L1清理功能。"""
-        result = await scheduler.cleanup_l1()
-        assert result == 0  # 没有数据，返回0
+        identity_module.register_user("test", "u1")
+        mock_compressor.compress_day.return_value = "日摘要"
+        await scheduler._compress_daily()
+        assert mock_compressor.compress_day.called
+
+    # L1 清理
+    # ================================================================
 
     @pytest.mark.asyncio
-    async def test_cleanup_l2(
-        self,
-        scheduler: Scheduler,
+    async def test_l1_cleanup(
+        self, scheduler: Scheduler,
     ) -> None:
-        """测试L2清理功能。"""
-        result = await scheduler.cleanup_l2()
-        assert result == 0  # 没有数据，返回0
+        await scheduler._l1_cleanup()  # 无数据，静默完成
+
+    # L3 维护
+    # ================================================================
 
     @pytest.mark.asyncio
-    async def test_recheck_l3_no_vector_store(
-        self,
-        scheduler: Scheduler,
+    async def test_l3_maintenance_no_vector_store(
+        self, scheduler: Scheduler,
     ) -> None:
-        """测试无向量存储时L3重评返回0。"""
-        result = await scheduler.recheck_l3()
-        assert result == 0
+        await scheduler._l3_maintenance()  # 无 VectorStore，静默返回
