@@ -4,7 +4,7 @@
 
 LLM 重要性分析：单条打分、灰区批量重评、L3 记忆合并。
 
-## 状态：重构中
+## 状态：✅ 完成 — 已迁移到 PluginConfig，batch_recheck + merge_content 已实现
 
 ## 构造
 

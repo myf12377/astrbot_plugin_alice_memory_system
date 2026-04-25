@@ -40,7 +40,7 @@ astrbot_alice_memory_modul/
 │   ├── identity/                  # 跨平台身份 [稳定]
 │   ├── storage/                   # ✅ JSON 持久化（第1层）— A1 完成
 │   ├── vector_store/              # ✅ ChromaDB 向量（第1层）— A2 完成
-│   ├── analyzer/                  # LLM 重要性分析（第1层）
+│   ├── analyzer/                  # ✅ LLM 重要性分析（第1层）— A3 完成
 │   ├── compressor/                # Path A/B 压缩（第2层）
 │   ├── scheduler/                 # 5段定时调度（第4层）
 │   └── migration/                 # 导入导出 [稳定]

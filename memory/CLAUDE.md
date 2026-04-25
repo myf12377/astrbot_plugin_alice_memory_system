@@ -7,13 +7,13 @@
 | [identity/](identity/) | IdentityModule | 1 | 稳定 |
 | [storage/](storage/) | MemoryStorage | 1 | ✅ 完成 |
 | [vector_store/](vector_store/) | VectorStore | 1 | ✅ 完成 |
-| [analyzer/](analyzer/) | ImportanceAnalyzer | 1 | 重构中 |
+| [analyzer/](analyzer/) | ImportanceAnalyzer | 1 | ✅ 完成 |
 | [compressor/](compressor/) | DialogueCompressor | 2 | 重构中 |
 | [migration/](migration/) | MigrationModule | 2 | 稳定 |
 | context_injector.py | ContextInjector | 3 | 重构中（有已知 bug） |
 | [scheduler/](scheduler/) | Scheduler | 4 | 重构中 |
 | plugin_config.py | PluginConfig | 0 | ✅ 完成 |
 | _conf_schema.json | 框架配置 schema | — | ✅ 完成 |
-| main.py | AliceMemoryPlugin | 5 | A2（Identity + Storage + VectorStore 已接入） |
+| main.py | AliceMemoryPlugin | 5 | A3（Layer 1 全部就绪） |
 
 模块边界见各自 CLAUDE.md。

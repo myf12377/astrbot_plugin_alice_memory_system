@@ -2,7 +2,7 @@
 
 L1 原始对话 / L2 双路中期记忆 / L3 长期向量记忆（衰减模型）。
 
-重构中 — 当前 A2 阶段：PluginConfig + Identity + MemoryStorage + VectorStore 已接入。
+重构中 — 当前 A3 阶段：PluginConfig + Identity + Storage + VectorStore + Analyzer 已接入。
 """
 
 from astrbot.api import logger
@@ -10,6 +10,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star
 
+from .memory.analyzer.analyzer import ImportanceAnalyzer
 from .memory.identity.identity import IdentityModule
 from .memory.plugin_config import PluginConfig
 from .memory.storage.storage import MemoryStorage
@@ -45,14 +46,17 @@ class AliceMemoryPlugin(Star):
         self._vector_store = VectorStore(
             self.plugin_config.data_dir, self.plugin_config,
         )
-        logger.info("[AliceMemory] 模块就绪 | Identity ✓ | Storage ✓ | VectorStore ✓")
+        self._analyzer = ImportanceAnalyzer(context, self.plugin_config)
+        logger.info(
+            "[AliceMemory] 模块就绪 | Identity ✓ | Storage ✓ | VectorStore ✓ | Analyzer ✓"
+        )
 
-        # TODO: Layer 1: ImportanceAnalyzer
+        # Layer 1 全部完成
         # TODO: Layer 2: DialogueCompressor / MigrationModule
         # TODO: Layer 3: ContextInjector
         # TODO: Layer 4: Scheduler
 
-        logger.info("[AliceMemory] 插件初始化完成（A1）")
+        logger.info("[AliceMemory] 插件初始化完成（A3）")
 
     # =========================================================================
     # LLM 钩子

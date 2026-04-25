@@ -1,5 +1,7 @@
 """
-分析器模块 - 基于LLM的重要性分析。
+分析器模块 — 基于 LLM 的重要性分析。
+
+单条打分、灰区批量重评、L3 记忆合并。
 """
 
 from __future__ import annotations
@@ -8,56 +10,105 @@ import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from memory.settings import MemorySettings
+    from memory.plugin_config import PluginConfig
 
 
 class ImportanceAnalyzer:
-    """基于LLM分析内容重要性。
+    """基于 LLM 分析内容重要性。
 
-    属性:
-        settings: 记忆配置。
+    支持单条分析、灰区批量重评、相似记忆合并。
     """
 
-    def __init__(
-        self,
-        context: Any,
-        settings: MemorySettings,
-    ) -> None:
-        """初始化重要性分析器。
+    def __init__(self, context: Any, config: PluginConfig) -> None:
+        """初始化分析器。
 
         Args:
-            context: 具有llm_generate能力的AstrBot上下文。
-            settings: 记忆配置。
+            context: 具有 llm_generate 能力的 AstrBot 上下文。
+            config: 插件配置（PluginConfig）。
         """
         self._context = context
-        self._settings = settings
-        self._model = settings.importance_analyze_model
-        self._max_tokens = settings.llm_max_tokens
-        self._temperature = settings.llm_temperature
+        self._config = config
+
+    # ==================================================================
+    # 单条分析
+    # ==================================================================
 
     async def analyze(self, content: str) -> int:
-        """分析内容的重要性分数。
-
-        Args:
-            content: 要分析的内容。
+        """分析单条内容重要性。
 
         Returns:
-            重要性分数 (0-10)。
+            0-10 分数。
         """
-        prompt = self._build_prompt(content)
+        prompt = self._build_analyze_prompt(content)
         response = await self._call_llm(prompt)
-        score = self._parse_score(response)
-        return score
+        return self._parse_score(response)
 
-    def _build_prompt(self, content: str) -> str:
-        """构建分析提示词。
+    async def should_promote_to_l3(self, content: str) -> bool:
+        """分数 ≥ importance_threshold → True。"""
+        score = await self.analyze(content)
+        return score >= self._config.importance_threshold
+
+    # ==================================================================
+    # 灰区批量重评
+    # ==================================================================
+
+    async def batch_recheck(self, memories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """对灰区记忆批量 LLM 重评。
 
         Args:
-            content: 要分析的内容。
+            memories: [{id, content, metadata, ...}, ...]
 
         Returns:
-            格式化后的提示词字符串。
+            [{vector_id, new_score, should_keep}, ...]
         """
+        if not memories:
+            return []
+
+        results: list[dict[str, Any]] = []
+        # 每批最多 5 条
+        batch_size = 5
+        for i in range(0, len(memories), batch_size):
+            batch = memories[i:i + batch_size]
+            prompt = self._build_batch_prompt(batch)
+            response = await self._call_llm(prompt)
+            batch_results = self._parse_batch_response(response, batch)
+            results.extend(batch_results)
+
+        return results
+
+    # ==================================================================
+    # 记忆合并
+    # ==================================================================
+
+    async def merge_content(self, content_1: str, content_2: str) -> str:
+        """LLM 合并两条相似记忆，去冗余保留关键信息。
+
+        Returns:
+            合并后的内容字符串。
+        """
+        prompt = self._build_merge_prompt(content_1, content_2)
+        response = await self._call_llm(prompt)
+        return response.strip()
+
+    # ==================================================================
+    # 内部：LLM 调用
+    # ==================================================================
+
+    async def _call_llm(self, prompt: str) -> str:
+        model = self._config.importance_analyze_model or None
+        generate_config: dict[str, Any] = {
+            "max_tokens": self._config.llm_max_tokens,
+            "temperature": self._config.llm_temperature,
+        }
+        if model:
+            generate_config["model"] = model
+        return await self._context.llm_generate(prompt, generate_config=generate_config)
+
+    # ==================================================================
+    # 内部：Prompt 构建
+    # ==================================================================
+
+    def _build_analyze_prompt(self, content: str) -> str:
         return (
             "请分析以下内容的重要性，评分范围为0-10分。\n"
             "0分：完全无关紧要的信息，如问候、闲聊\n"
@@ -67,52 +118,61 @@ class ImportanceAnalyzer:
             "请只输出一个0-10的数字分数，不要有其他文字。"
         )
 
-    async def _call_llm(self, prompt: str) -> str:
-        """调用LLM进行分析。
-
-        Args:
-            prompt: 发送给LLM的提示词。
-
-        Returns:
-            LLM响应文本。
-        """
-        model = self._model if self._model else None
-        generate_config: dict[str, Any] = {
-            "max_tokens": self._max_tokens,
-            "temperature": self._temperature,
-        }
-        if model:
-            generate_config["model"] = model
-
-        response: str = await self._context.llm_generate(
-            prompt, generate_config=generate_config
+    def _build_batch_prompt(self, memories: list[dict[str, Any]]) -> str:
+        items = []
+        for i, m in enumerate(memories):
+            content = m.get("content", "")
+            score = m.get("metadata", {}).get("effective_score", "?")
+            items.append(f"[{i}] effective_score={score} | {content}")
+        items_text = "\n".join(items)
+        return (
+            "以下是一些处于\"灰区\"的记忆（分数偏低，面临淘汰）。\n"
+            "请重新评估每条记忆的重要性，给出新的分数（0-10），"
+            "并判断是否应保留（keep）或删除（drop）。\n\n"
+            f"{items_text}\n\n"
+            "请按以下格式输出（每条一行）：\n"
+            "[序号] 新分数 keep/drop 简短理由\n\n"
+            "示例：\n"
+            "[0] 7 keep 涉及用户重要偏好\n"
+            "[1] 2 drop 信息已过时"
         )
-        return response
 
-    def _parse_score(self, response: str) -> int:
-        """从LLM响应中解析重要性分数。
+    def _build_merge_prompt(self, content_1: str, content_2: str) -> str:
+        return (
+            "以下两条记忆高度相似，请合并为一条，去除重复，保留所有关键信息。\n\n"
+            f"记忆1：{content_1}\n\n"
+            f"记忆2：{content_2}\n\n"
+            "请输出合并后的记忆内容（直接输出合并文本，不要添加说明）："
+        )
 
-        Args:
-            response: LLM响应文本。
+    # ==================================================================
+    # 内部：解析
+    # ==================================================================
 
-        Returns:
-            解析后的分数 (0-10)，解析失败默认为0。
-        """
+    @staticmethod
+    def _parse_score(response: str) -> int:
         cleaned = response.strip()
         match = re.search(r"-?\d+", cleaned)
         if match:
-            score = int(match.group())
-            return max(0, min(10, score))
+            return max(0, min(10, int(match.group())))
         return 0
 
-    async def should_promote_to_l3(self, content: str) -> bool:
-        """检查内容是否应升级到L3。
-
-        Args:
-            content: 要检查的内容。
-
-        Returns:
-            如果重要性分数>=阈值则返回True。
-        """
-        score = await self.analyze(content)
-        return score >= self._settings.importance_threshold
+    @staticmethod
+    def _parse_batch_response(
+        response: str, batch: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        lines = response.strip().split("\n")
+        for line in lines:
+            match = re.match(r"\[(\d+)\]\s+(\d+)\s+(keep|drop)", line.strip(), re.IGNORECASE)
+            if match:
+                idx = int(match.group(1))
+                new_score = int(match.group(2))
+                should_keep = match.group(3).lower() == "keep"
+                if idx < len(batch):
+                    results.append({
+                        "vector_id": batch[idx].get("id", ""),
+                        "new_score": max(0, min(10, new_score)),
+                        "should_keep": should_keep,
+                    })
+        return results

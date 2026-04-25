@@ -1,5 +1,5 @@
 """
-分析器模块测试。
+分析器模块测试 — 使用 PluginConfig。
 """
 
 from __future__ import annotations
@@ -9,16 +9,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from memory.analyzer.analyzer import ImportanceAnalyzer
-from memory.settings import MemorySettings
+from memory.plugin_config import PluginConfig
 
 
 class TestImportanceAnalyzer:
-    """ImportanceAnalyzer类的测试。"""
+    """ImportanceAnalyzer 类的测试。"""
 
     @pytest.fixture
-    def settings(self) -> MemorySettings:
-        """创建测试配置。"""
-        return MemorySettings(
+    def config(self) -> PluginConfig:
+        return PluginConfig(
             importance_threshold=8,
             importance_analyze_model="test-model",
             llm_max_tokens=1024,
@@ -27,53 +26,44 @@ class TestImportanceAnalyzer:
 
     @pytest.fixture
     def mock_context(self) -> MagicMock:
-        """创建模拟AstrBot上下文。"""
         context = MagicMock()
         context.llm_generate = AsyncMock()
         return context
 
     @pytest.fixture
     def analyzer(
-        self,
-        mock_context: MagicMock,
-        settings: MemorySettings,
+        self, mock_context: MagicMock, config: PluginConfig,
     ) -> ImportanceAnalyzer:
-        """创建ImportanceAnalyzer实例。"""
-        return ImportanceAnalyzer(mock_context, settings)
+        return ImportanceAnalyzer(mock_context, config)
+
+    # 单条分析
+    # ================================================================
 
     def test_build_prompt(self, analyzer: ImportanceAnalyzer) -> None:
-        """测试提示词构建。"""
-        content = "Test content"
-        prompt = analyzer._build_prompt(content)
+        prompt = analyzer._build_analyze_prompt("Test content")
         assert "Test content" in prompt
         assert "0-10" in prompt
 
     def test_parse_score_valid(self, analyzer: ImportanceAnalyzer) -> None:
-        """测试解析有效分数。"""
         assert analyzer._parse_score("8") == 8
         assert analyzer._parse_score("  5  ") == 5
         assert analyzer._parse_score("The score is 9.") == 9
 
     def test_parse_score_boundary(self, analyzer: ImportanceAnalyzer) -> None:
-        """测试解析边界分数。"""
         assert analyzer._parse_score("0") == 0
         assert analyzer._parse_score("10") == 10
         assert analyzer._parse_score("15") == 10
         assert analyzer._parse_score("-3") == 0
 
     def test_parse_score_invalid(self, analyzer: ImportanceAnalyzer) -> None:
-        """测试解析无效响应。"""
         assert analyzer._parse_score("no number here") == 0
         assert analyzer._parse_score("") == 0
         assert analyzer._parse_score("three") == 0
 
     @pytest.mark.asyncio
     async def test_analyze_success(
-        self,
-        analyzer: ImportanceAnalyzer,
-        mock_context: MagicMock,
+        self, analyzer: ImportanceAnalyzer, mock_context: MagicMock,
     ) -> None:
-        """测试成功分析。"""
         mock_context.llm_generate.return_value = "8"
         score = await analyzer.analyze("Important personal preference")
         assert score == 8
@@ -81,13 +71,10 @@ class TestImportanceAnalyzer:
 
     @pytest.mark.asyncio
     async def test_analyze_with_custom_model(
-        self,
-        mock_context: MagicMock,
-        settings: MemorySettings,
+        self, mock_context: MagicMock, config: PluginConfig,
     ) -> None:
-        """测试使用自定义模型设置进行分析。"""
-        settings.importance_analyze_model = "custom-model"
-        analyzer = ImportanceAnalyzer(mock_context, settings)
+        config.importance_analyze_model = "custom-model"
+        analyzer = ImportanceAnalyzer(mock_context, config)
         mock_context.llm_generate.return_value = "7"
         await analyzer.analyze("Test content")
         call_kwargs = mock_context.llm_generate.call_args
@@ -95,22 +82,71 @@ class TestImportanceAnalyzer:
 
     @pytest.mark.asyncio
     async def test_analyze_empty_model_uses_default(
-        self,
-        mock_context: MagicMock,
-        settings: MemorySettings,
+        self, mock_context: MagicMock, config: PluginConfig,
     ) -> None:
-        """测试空模型时使用默认配置。"""
-        settings.importance_analyze_model = ""
-        analyzer = ImportanceAnalyzer(mock_context, settings)
+        config.importance_analyze_model = ""
+        analyzer = ImportanceAnalyzer(mock_context, config)
         mock_context.llm_generate.return_value = "5"
         await analyzer.analyze("Test content")
         call_kwargs = mock_context.llm_generate.call_args
         assert "model" not in call_kwargs[1]["generate_config"]
 
     @pytest.mark.asyncio
-    async def test_should_promote_to_l3(self, analyzer: ImportanceAnalyzer) -> None:
-        """测试L3升级检查。"""
-        mock_context = analyzer._context
-        mock_context.llm_generate.return_value = "9"
+    async def test_should_promote_to_l3(
+        self, analyzer: ImportanceAnalyzer,
+    ) -> None:
+        analyzer._context.llm_generate.return_value = "9"
         result = await analyzer.should_promote_to_l3("Any content")
         assert result is True
+
+    # 灰区批量重评
+    # ================================================================
+
+    @pytest.mark.asyncio
+    async def test_batch_recheck_empty(
+        self, analyzer: ImportanceAnalyzer,
+    ) -> None:
+        result = await analyzer.batch_recheck([])
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_batch_recheck(
+        self, analyzer: ImportanceAnalyzer, mock_context: MagicMock,
+    ) -> None:
+        mock_context.llm_generate.return_value = (
+            "[0] 7 keep 用户偏好信息\n"
+            "[1] 2 drop 信息已过时"
+        )
+        memories = [
+            {
+                "id": "vid-1",
+                "content": "用户喜欢咖啡",
+                "metadata": {"effective_score": 4.0},
+            },
+            {
+                "id": "vid-2",
+                "content": "天气闲聊",
+                "metadata": {"effective_score": 3.5},
+            },
+        ]
+        results = await analyzer.batch_recheck(memories)
+        assert len(results) == 2
+        assert results[0]["vector_id"] == "vid-1"
+        assert results[0]["new_score"] == 7
+        assert results[0]["should_keep"] is True
+        assert results[1]["vector_id"] == "vid-2"
+        assert results[1]["should_keep"] is False
+
+    # 记忆合并
+    # ================================================================
+
+    @pytest.mark.asyncio
+    async def test_merge_content(
+        self, analyzer: ImportanceAnalyzer, mock_context: MagicMock,
+    ) -> None:
+        mock_context.llm_generate.return_value = "用户偏好美式咖啡，每天早晨一杯"
+        result = await analyzer.merge_content(
+            "用户喜欢咖啡",
+            "用户每天早晨喝美式咖啡",
+        )
+        assert "咖啡" in result
