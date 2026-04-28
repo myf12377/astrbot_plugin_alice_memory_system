@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 from astrbot.api import logger
 
@@ -99,11 +100,14 @@ class Scheduler:
         if not self._compressor or not self._config.l2_path_b_enabled:
             return
         try:
-            from datetime import datetime, timedelta, timezone
-            yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+            from datetime import datetime, timedelta
+            cst = ZoneInfo("Asia/Shanghai")
+            yesterday = (datetime.now(cst) - timedelta(days=1)).strftime("%Y-%m-%d")
             for uid in self._identity_module.get_all_users():
                 try:
-                    await self._compressor.compress_day(uid, yesterday)
+                    result = await self._compressor.compress_day(uid, yesterday)
+                    if result:
+                        logger.info("[AliceMemory] Path B 压缩完成 | uid=%s... | date=%s", uid[:8], yesterday)
                 except Exception as e:
                     logger.error("[AliceMemory] Path B 压缩失败 | uid=%s | %s", uid[:8], e)
         except Exception:
@@ -167,9 +171,11 @@ class Scheduler:
                 try:
                     summary = await self._compressor.compress_context_summary(uid)
                     if summary:
-                        from datetime import datetime, timezone
-                        week_start = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        from datetime import datetime
+                        cst = ZoneInfo("Asia/Shanghai")
+                        week_start = datetime.now(cst).strftime("%Y-%m-%d")
                         self._storage.set_weekly_summary(uid, summary, week_start)
+                        logger.info("[AliceMemory] Path A 压缩完成 | uid=%s... | week_start=%s", uid[:8], week_start)
                 except Exception as e:
                     logger.error("[AliceMemory] Path A 压缩失败 | uid=%s | %s", uid[:8], e)
         except Exception:
