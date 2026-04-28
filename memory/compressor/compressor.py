@@ -104,11 +104,21 @@ class DialogueCompressor:
         if not today_dialogues and not daily_summaries and weekly is None:
             return None
 
-        prompt = self._config.l2_compress_prompt_a.format(
-            weekly_summary=weekly_text,
-            today_dialogues=today_text,
-            daily_summaries=daily_text,
-        )
+        template_a = self._config.l2_compress_prompt_a
+        if "{weekly_summary}" in template_a:
+            prompt = template_a.format(
+                weekly_summary=weekly_text,
+                today_dialogues=today_text,
+                daily_summaries=daily_text,
+            )
+        else:
+            prompt = (
+                template_a
+                + "\n\n已有周摘要：\n" + weekly_text
+                + "\n\n今日对话：\n" + today_dialogues
+                + "\n\n近日摘要：\n" + daily_summaries
+                + "\n\n请输出合并后的完整周摘要："
+            )
         summary = await self._call_llm(prompt, umo)
         summary = summary.strip()
         if not summary:
@@ -155,7 +165,10 @@ class DialogueCompressor:
             self._config.l2_compress_prompt_a if path == "a"
             else self._config.l2_compress_prompt_b
         )
-        prompt = template.format(content=content)
+        if "{content}" in template:
+            prompt = template.format(content=content)
+        else:
+            prompt = template + "\n\n对话内容：\n" + content + "\n\n日摘要："
         return (await self._call_llm(prompt, umo)).strip()
 
     async def _estimate_importance(self, summary: str, umo: str = "") -> int:
