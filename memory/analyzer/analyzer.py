@@ -101,13 +101,21 @@ class ImportanceAnalyzer:
 
     async def _call_llm(self, prompt: str, umo: str = "") -> str:
         kwargs: dict[str, Any] = {
-            "chat_provider_id": await self._context.get_current_chat_provider_id(umo),
             "max_tokens": self._config.llm_max_tokens,
             "temperature": self._config.llm_temperature,
         }
         if self._config.importance_analyze_model:
             kwargs["model"] = self._config.importance_analyze_model
-        resp = await self._context.llm_generate(prompt=prompt, **kwargs)
+        if umo:
+            try:
+                kwargs["chat_provider_id"] = await self._context.get_current_chat_provider_id(umo)
+            except Exception:
+                pass
+        try:
+            resp = await self._context.llm_generate(prompt=prompt, **kwargs)
+        except Exception:
+            kwargs.pop("chat_provider_id", None)
+            resp = await self._context.llm_generate(prompt=prompt, **kwargs)
         return getattr(resp, "completion_text", "") or ""
 
     # ==================================================================

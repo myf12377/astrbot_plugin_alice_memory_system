@@ -14,7 +14,7 @@ AstrBot 三层记忆插件 — 让 AI 拥有类人记忆：短期对话、中期
 ## 快速开始
 
 ```bash
-pip install chromadb pydantic
+pip install chromadb
 ```
 
 将插件文件夹复制到 AstrBot 插件目录：
@@ -130,6 +130,16 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 
 通过 MigrationModule 可进行完整备份/还原，以及 `.astrmem` 和 ChromaDB 格式的导出/导入。
 
+### 跨设备记忆迁移
+
+将记忆从一台设备转移到另一台：
+
+1. **源设备**：关闭 AstrBot → 复制 `data/plugin_data/astrbot_alice_memory_modul/` 整个目录
+2. **目标设备**：部署插件后 `首次启动前`，将复制的目录粘贴到相同位置
+3. **启动** AstrBot → 所有 L1/L2/L3 记忆、用户身份、向量库自动恢复
+
+> 注意：`data_dir` 默认路径在 `_conf_schema.json` 中定义，若目标设备修改过路径，需保持配置一致。迁移在插件未启动时进行，避免文件被占用导致数据损坏。
+
 ## 开发
 
 - Python 3.10+
@@ -139,3 +149,19 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 ## 许可证
 
 MIT
+
+## 更新日志
+
+### v2.0.1（2026-04-29）
+
+**修复：**
+- L2 压缩现在不依赖前端模板是否包含 `{content}` 占位符，即使模板截断也能正常生成摘要
+- 调度器时区从 UTC 修正为 Asia/Shanghai，解决定时压缩日期偏差问题
+- `_conf_schema.json` 中 Path A/B 模板默认值与代码对齐
+- 内容校验机制 `_looks_valid()` 防止 LLM 返回无效内容被存入磁盘
+- 重要性评分不再被内容校验误拦截
+
+**改进：**
+- 压缩任务执行时输出 INFO 日志，方便运维确认
+- 新增跨设备记忆迁移指南
+- 依赖声明文件 requirements.txt

@@ -1,0 +1,3 @@
+# astrbot_alice_memory_modul - 三层记忆系统插件
+# AstrBot 已内置 pydantic，无需重复声明
+chromadb>=0.5.0
