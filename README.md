@@ -152,6 +152,21 @@ MIT
 
 ## 更新日志
 
+### v2.1.0（2026-04-29）
+
+**新增：**
+- L3 月度合并任务：每月 1 日 06:00 自动执行全量相似记忆扫描与归并，消除冗余 L3 记忆
+- 调度器任务数从 5 增至 6 段编排
+
+**修复：**
+- `context_injector._is_monday()` 从 UTC 改为 CST，修复周一 00:00-07:59 间周摘要注入异常
+- `compressor.compress_context_summary()` 日期计算从 UTC 改为 CST，修复 04:00 周压缩日期偏移
+- `compressor._get_dialogues()` 时间边界从 UTC 改为 CST，修复日对话过滤偏移 8 小时
+
+**清理：**
+- 前端配置移除 6 个冗余字段（`log_level`、`store_media_content`、`l2_summary_hidden`、`l2_enabled`、`compact_progress_feedback`、`l3_embedding_provider`）
+- `l3_merge_similarity` 描述修正为"L3 注入检索相似度过滤阈值"
+
 ### v2.0.1（2026-04-29）
 
 **修复：**
