@@ -382,6 +382,57 @@ class VectorStore:
         similar.sort(key=lambda x: x["similarity"], reverse=True)
         return similar
 
+    async def find_similar_by_content(
+        self, user_id: str, content: str, threshold: float, top_k: int = 20,
+    ) -> list[dict[str, Any]]:
+        """按内容文本查找相似记忆。
+
+        Args:
+            user_id: 用户标识符。
+            content: 查询内容文本。
+            threshold: 余弦相似度阈值（如 0.9）。
+            top_k: 最多返回条数。
+
+        Returns:
+            相似度 >= threshold 的记忆列表（按相似度降序）。
+        """
+        if not self._ensure_collection():
+            return []
+        if not content:
+            return []
+
+        query_vector: list[float] | None = None
+        if self._embedding_func:
+            vectors = await self._call_embedding_func_async([content])
+            query_vector = vectors[0] if vectors else None
+
+        total = self._collection.count()
+        if total == 0:
+            return []
+
+        results = self._collection.query(
+            query_texts=[content] if query_vector is None else None,
+            query_embeddings=[query_vector] if query_vector else None,
+            n_results=min(top_k, total),
+            where={"user_id": user_id},
+        )
+
+        similar: list[dict[str, Any]] = []
+        if results["ids"] and results["ids"][0]:
+            for i, vid in enumerate(results["ids"][0]):
+                distance = results["distances"][0][i] if results["distances"] else 1.0
+                similarity = 1.0 - distance
+                if similarity >= threshold:
+                    similar.append({
+                        "id": vid,
+                        "content": results["documents"][0][i] if results["documents"] else "",
+                        "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
+                        "similarity": round(similarity, 4),
+                    })
+
+        similar.sort(key=lambda x: x["similarity"], reverse=True)
+        return similar
+
     async def merge_memories(
         self, vid1: str, vid2: str, merged_content: str, new_score: float,
     ) -> str:

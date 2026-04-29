@@ -9,8 +9,9 @@ L3  → extra_user_content_parts（[L3记忆]，覆盖式）
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.agent.message import TextPart
@@ -168,7 +169,8 @@ class ContextInjector:
 
     @staticmethod
     def _is_monday() -> bool:
-        return datetime.now(timezone.utc).weekday() == 0
+        cst = ZoneInfo("Asia/Shanghai")
+        return datetime.now(cst).weekday() == 0
 
     @staticmethod
     def _clean_marker(request: ProviderRequest, marker: str) -> None:

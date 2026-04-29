@@ -5,13 +5,6 @@
     "default": "data/plugin_data/astrbot_alice_memory_modul",
     "hint": "相对或绝对路径。数据将按 L1/L2/L3 子目录组织。"
   },
-  "log_level": {
-    "type": "string",
-    "description": "日志级别",
-    "default": "INFO",
-    "options": ["DEBUG", "INFO", "WARNING", "ERROR"],
-    "hint": "DEBUG=所有细节 / INFO=正常(推荐) / WARNING=潜在问题 / ERROR=仅故障"
-  },
   "hook_enabled": {
     "type": "bool",
     "description": "总钩子开关",
@@ -35,11 +28,6 @@
     "description": "注入上下文的 L1 对话最大条数",
     "default": 10,
     "hint": "范围 1-50"
-  },
-  "store_media_content": {
-    "type": "bool",
-    "description": "存储媒体内容描述",
-    "default": true
   },
 
   "l2_path_a_enabled": {
@@ -77,23 +65,6 @@
     "default": 3,
     "hint": "范围 0-14。注入最近 N 天的日摘要到上下文。0=不注入。"
   },
-  "l2_summary_hidden": {
-    "type": "bool",
-    "description": "摘要默认隐藏",
-    "default": false,
-    "hint": "开启后压缩产生的摘要不会注入到前端对话"
-  },
-
-  "l2_enabled": {
-    "type": "bool",
-    "description": "L2 记忆总开关",
-    "default": true
-  },
-  "compact_progress_feedback": {
-    "type": "bool",
-    "description": "压缩时显示进度提示",
-    "default": true
-  },
   "manual_compress_feedback_mode": {
     "type": "string",
     "description": "手动压缩反馈模式",
@@ -117,13 +88,6 @@
     "description": "L3 向量记忆开关",
     "default": true
   },
-  "l3_embedding_provider": {
-    "type": "string",
-    "description": "向量嵌入模型",
-    "default": "auto",
-    "options": ["auto", "chroma"],
-    "hint": "auto=使用 AstrBot EmbeddingProvider / chroma=ChromaDB 内置模型"
-  },
   "importance_threshold": {
     "type": "int",
     "description": "重要性阈值",
@@ -132,15 +96,15 @@
   },
   "l3_merge_similarity": {
     "type": "float",
-    "description": "向量相似度合并阈值",
+    "description": "L3 注入检索相似度过滤阈值",
     "default": 0.9,
-    "hint": "范围 0.0-1.0。两条记忆相似度 ≥ 此值触发 LLM 合并。0.85-0.95 推荐。"
+    "hint": "范围 0.0-1.0。L3 注入检索时，相似度 ≥ 此值才注入上下文。也用于月度合并判定。0.85-0.95 推荐。"
   },
   "l3_merge_interval_days": {
     "type": "int",
     "description": "全量合并周期（天）",
     "default": 30,
-    "hint": "范围 1-365。多久执行一次全量 pairwise 相似度扫描兜底合并。"
+    "hint": "范围 1-365。Scheduler 每月 1 日 06:00 执行全量 pairwise 相似度扫描归并。"
   },
   "l3_decay_rate": {
     "type": "float",

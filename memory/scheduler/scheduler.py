@@ -1,8 +1,8 @@
 """
-调度器模块 — 5 段定时任务编排。
+调度器模块 — 6 段定时任务编排。
 
 01:00 Path B 日压缩 / 02:00 L1 清理 / 03:00 L3 衰减+灰区重评
-04:00 Path A 周压缩 / 周一 05:00 周摘要重置
+04:00 Path A 周压缩 / 周一 05:00 周摘要重置 / 1日06:00 L3 月度合并
 """
 
 from __future__ import annotations
@@ -22,9 +22,9 @@ if TYPE_CHECKING:
 
 
 class Scheduler:
-    """记忆定时任务调度器 — 5 段编排。
+    """记忆定时任务调度器 — 6 段编排。
 
-    不负责压缩/衰减/清理算法，仅调用各模块。
+    不负责压缩/衰减/合并/清理算法，仅调用各模块。
     """
 
     def __init__(
@@ -50,7 +50,7 @@ class Scheduler:
     # ==================================================================
 
     def start(self) -> None:
-        """向 AstrBot CronJobManager 注册 5 项定时任务。"""
+        """向 AstrBot CronJobManager 注册 6 项定时任务。"""
         cron_manager = getattr(self._context, "cron_manager", None)
         if cron_manager is None:
             logger.warning("[AliceMemory] CronManager 不可用，跳过定时任务注册")
@@ -62,6 +62,7 @@ class Scheduler:
             ("0 3 * * *",   self._safe_wrap(self._l3_maintenance),  "L3 衰减+灰区重评"),
             ("0 4 * * *",   self._safe_wrap(self._compress_context), "Path A 周压缩"),
             ("0 5 * * 1",   self._safe_wrap(self._reset_weekly),    "周一重置周摘要"),
+            ("0 6 1 * *",   self._safe_wrap(self._l3_merge),        "L3 月度合并"),
         ]
         for i, (cron, handler, desc) in enumerate(jobs):
             cron_manager.add_basic_job(
@@ -195,3 +196,59 @@ class Scheduler:
                 logger.info("[AliceMemory] 周一重置 | 清除=%d 个周摘要", count)
         except Exception:
             logger.error("[AliceMemory] 周一重置异常", exc_info=True)
+
+    # ==================================================================
+    # 每月 1 日 06:00 — L3 月度合并
+    # ==================================================================
+
+    async def _l3_merge(self) -> None:
+        """贪心法合并 L3 相似记忆。"""
+        if not self._vector_store or not self._analyzer or not self._config.l3_enabled:
+            return
+        threshold = self._config.l3_merge_similarity
+        try:
+            for uid in self._identity_module.get_all_users():
+                memories = self._vector_store.get_user_memories(uid)
+                if len(memories) < 2:
+                    continue
+                # 按 importance 降序排列，优先保留高价值记忆
+                memories.sort(
+                    key=lambda m: m["metadata"].get("importance", 0),
+                    reverse=True,
+                )
+                consumed: set[str] = set()
+                merged_count = 0
+
+                for m1 in memories:
+                    if m1["id"] in consumed:
+                        continue
+                    similar = await self._vector_store.find_similar_by_content(
+                        uid, m1["content"], threshold,
+                    )
+                    for s in similar:
+                        if s["id"] in consumed or s["id"] == m1["id"]:
+                            continue
+                        merged = await self._analyzer.merge_content(
+                            m1["content"], s["content"],
+                        )
+                        if not merged:
+                            continue
+                        new_score = max(
+                            m1["metadata"].get("importance", 0),
+                            s["metadata"].get("importance", 0),
+                        ) + 0.5
+                        await self._vector_store.merge_memories(
+                            m1["id"], s["id"], merged, new_score,
+                        )
+                        consumed.add(m1["id"])
+                        consumed.add(s["id"])
+                        merged_count += 1
+                        break  # m1 已消费
+
+                if merged_count:
+                    logger.info(
+                        "[AliceMemory] L3 合并 | uid=%s... | 合并=%d 对",
+                        uid[:8], merged_count,
+                    )
+        except Exception:
+            logger.error("[AliceMemory] L3 合并异常", exc_info=True)
