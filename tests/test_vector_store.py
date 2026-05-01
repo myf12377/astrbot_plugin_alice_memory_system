@@ -38,7 +38,9 @@ class TestVectorStore:
 
     @pytest.fixture
     def vector_store(
-        self, temp_dir: Path, config: PluginConfig,
+        self,
+        temp_dir: Path,
+        config: PluginConfig,
     ) -> Iterator[VectorStore]:
         vs = VectorStore(temp_dir, config)
         yield vs
@@ -53,10 +55,13 @@ class TestVectorStore:
         assert len(memory_id) > 0
 
     async def test_add_memory_with_metadata(
-        self, vector_store: VectorStore,
+        self,
+        vector_store: VectorStore,
     ) -> None:
         memory_id = await vector_store.add_memory(
-            "user1", "Test content", {"importance": 8},
+            "user1",
+            "Test content",
+            {"importance": 8},
         )
         assert memory_id
 
@@ -75,7 +80,8 @@ class TestVectorStore:
         assert len(results) >= 1
 
     async def test_search_returns_relevant(
-        self, vector_store: VectorStore,
+        self,
+        vector_store: VectorStore,
     ) -> None:
         """搜索应返回语义相关的结果。"""
         await vector_store.add_memory("user1", "Apple is a fruit")
@@ -105,7 +111,8 @@ class TestVectorStore:
         assert result is True
 
     def test_update_metadata_not_found(
-        self, vector_store: VectorStore,
+        self,
+        vector_store: VectorStore,
     ) -> None:
         assert vector_store.update_metadata("nonexistent-id", {"key": "value"}) is False
 
@@ -118,20 +125,26 @@ class TestVectorStore:
         assert gray == 0
 
     async def test_apply_decay_keeps_high_score(
-        self, vector_store: VectorStore,
+        self,
+        vector_store: VectorStore,
     ) -> None:
         memory_id = await vector_store.add_memory(
-            "user1", "Important fact", {"importance": 10},
+            "user1",
+            "Important fact",
+            {"importance": 10},
         )
         vector_store.update_metadata(memory_id, {"created_at": "2026-04-25T00:00:00"})
         deleted, gray = vector_store.apply_decay("user1")
         assert deleted == 0
 
     async def test_get_gray_zone_memories(
-        self, vector_store: VectorStore,
+        self,
+        vector_store: VectorStore,
     ) -> None:
         memory_id = await vector_store.add_memory(
-            "user1", "Gray zone test", {"importance": 5},
+            "user1",
+            "Gray zone test",
+            {"importance": 5},
         )
         vector_store.update_metadata(memory_id, {"effective_score": 4.0})
         gray = vector_store.get_gray_zone_memories("user1")
@@ -145,13 +158,17 @@ class TestVectorStore:
         assert result == []
 
     async def test_find_similar_by_content_empty(
-        self, vector_store: VectorStore,
+        self,
+        vector_store: VectorStore,
     ) -> None:
-        result = await vector_store.find_similar_by_content("user1", "test content", 0.9)
+        result = await vector_store.find_similar_by_content(
+            "user1", "test content", 0.9
+        )
         assert result == []
 
     async def test_find_similar_by_content_empty_content(
-        self, vector_store: VectorStore,
+        self,
+        vector_store: VectorStore,
     ) -> None:
         result = await vector_store.find_similar_by_content("user1", "", 0.9)
         assert result == []

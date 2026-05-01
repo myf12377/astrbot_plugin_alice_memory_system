@@ -36,7 +36,8 @@ class AliceMemoryPlugin(Star):
         self._identity = IdentityModule(self.plugin_config.data_dir)
         self._storage = MemoryStorage(self.plugin_config)
         self._vector_store = VectorStore(
-            self.plugin_config.data_dir, self.plugin_config,
+            self.plugin_config.data_dir,
+            self.plugin_config,
         )
         self._analyzer = ImportanceAnalyzer(context, self.plugin_config)
         logger.info(
@@ -44,16 +45,26 @@ class AliceMemoryPlugin(Star):
         )
 
         # Layer 2+3: 压缩 & 注入
-        self._compressor = DialogueCompressor(context, self._storage, self.plugin_config)
+        self._compressor = DialogueCompressor(
+            context, self._storage, self.plugin_config
+        )
         self._injector = ContextInjector(
-            self._storage, self._vector_store, self._identity, self.plugin_config,
+            self._storage,
+            self._vector_store,
+            self._identity,
+            self.plugin_config,
         )
         logger.info("[AliceMemory] 模块就绪 | Compressor ✓ | ContextInjector ✓")
 
         # Layer 4: 调度（注册在 initialize() 中完成）
         self._scheduler = Scheduler(
-            context, self._storage, self._identity, self._vector_store,
-            self.plugin_config, self._compressor, self._analyzer,
+            context,
+            self._storage,
+            self._identity,
+            self._vector_store,
+            self.plugin_config,
+            self._compressor,
+            self._analyzer,
         )
 
         logger.info("[AliceMemory] 插件初始化完成")
@@ -103,31 +114,39 @@ class AliceMemoryPlugin(Star):
             self._storage.append_dialogue(user_id, "user", content)
             logger.debug(
                 "[AliceMemory] L1 存储 | uid=%s... | role=user | len=%d",
-                user_id[:8], len(content),
+                user_id[:8],
+                len(content),
             )
 
             # 注入全部记忆管线
             await self._injector.inject_all(user_id, req)
             logger.info(
                 "[AliceMemory] 注入完成 | contexts=%d | extra_parts=%d",
-                len(req.contexts), len(req.extra_user_content_parts),
+                len(req.contexts),
+                len(req.extra_user_content_parts),
             )
 
             # L3 晋升判断
             if self.plugin_config.l3_enabled:
                 try:
                     score = await self._analyzer.analyze(
-                        content, event.unified_msg_origin,
+                        content,
+                        event.unified_msg_origin,
                     )
                     logger.debug(
                         "[AliceMemory] 重要性评分 | score=%d | threshold=%d",
-                        score, self.plugin_config.importance_threshold,
+                        score,
+                        self.plugin_config.importance_threshold,
                     )
                     if score >= self.plugin_config.importance_threshold:
                         vid = await self._vector_store.add_memory(
-                            user_id, content, {"importance": score},
+                            user_id,
+                            content,
+                            {"importance": score},
                         )
-                        logger.info("[AliceMemory] L3 晋升 | vid=%s | score=%d", vid[:8], score)
+                        logger.info(
+                            "[AliceMemory] L3 晋升 | vid=%s | score=%d", vid[:8], score
+                        )
                 except Exception as e:
                     logger.error("[AliceMemory] L3 晋升失败 | %s", e)
 
@@ -135,9 +154,7 @@ class AliceMemoryPlugin(Star):
             logger.error("[AliceMemory] on_llm_request 异常", exc_info=True)
 
     @filter.on_llm_response()
-    async def on_llm_response(
-        self, event: AstrMessageEvent, resp: LLMResponse
-    ) -> None:
+    async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse) -> None:
         """LLM 响应后 — 存储助手回复到 L1。"""
         try:
             if not self.plugin_config.hook_enabled:
@@ -156,7 +173,8 @@ class AliceMemoryPlugin(Star):
             self._storage.append_dialogue(user_id, "assistant", completion)
             logger.debug(
                 "[AliceMemory] L1 存储 | uid=%s... | role=assistant | len=%d",
-                user_id[:8], len(completion),
+                user_id[:8],
+                len(completion),
             )
 
         except Exception:
@@ -167,9 +185,7 @@ class AliceMemoryPlugin(Star):
     # =========================================================================
 
     @filter.command("compact")
-    async def cmd_compact(
-        self, event: AstrMessageEvent, date: str | None = None
-    ):
+    async def cmd_compact(self, event: AstrMessageEvent, date: str | None = None):
         """手动压缩记忆。/compact → Path A 周压缩，/compact 2026-04-25 → Path B 日压缩。"""
         # silent 模式：阻止事件继续传播到 LLM 管线
         silent = self.plugin_config.manual_compress_feedback_mode == "silent"
@@ -187,7 +203,9 @@ class AliceMemoryPlugin(Star):
         try:
             if date:
                 item = await self._compressor.compress_day(
-                    user_id, date, umo=event.unified_msg_origin,
+                    user_id,
+                    date,
+                    umo=event.unified_msg_origin,
                 )
                 if item is None:
                     if not silent:
@@ -196,7 +214,8 @@ class AliceMemoryPlugin(Star):
                 result_text = f"{date} 对话已压缩为日摘要"
             else:
                 item = await self._compressor.compress_context_summary(
-                    user_id, event.unified_msg_origin,
+                    user_id,
+                    event.unified_msg_origin,
                 )
                 if item is None:
                     if not silent:
@@ -209,7 +228,9 @@ class AliceMemoryPlugin(Star):
                 return
 
             feedback = await self._build_feedback(
-                user_id, result_text, event.unified_msg_origin,
+                user_id,
+                result_text,
+                event.unified_msg_origin,
             )
             yield event.plain_result(feedback)
 
@@ -223,9 +244,7 @@ class AliceMemoryPlugin(Star):
     # =========================================================================
 
     @filter.command("important")
-    async def cmd_important(
-        self, event: AstrMessageEvent, *, content: str = ""
-    ):
+    async def cmd_important(self, event: AstrMessageEvent, *, content: str = ""):
         """手动标记重要记忆。/important <内容> → 分析并存入 L3。"""
         if not content.strip():
             yield event.plain_result("[AliceMemory] 用法: /important <内容>")
@@ -241,12 +260,16 @@ class AliceMemoryPlugin(Star):
         try:
             score = await self._analyzer.analyze(content, event.unified_msg_origin)
             vid = await self._vector_store.add_memory(
-                user_id, content, {"importance": score},
+                user_id,
+                content,
+                {"importance": score},
             )
             yield event.plain_result(
                 f"[AliceMemory] 已存入 L3 | id={vid[:8]} | 重要性={score}/10"
             )
-            logger.info("[AliceMemory] /important | vid=%s... | score=%d", vid[:8], score)
+            logger.info(
+                "[AliceMemory] /important | vid=%s... | score=%d", vid[:8], score
+            )
         except Exception as e:
             logger.error("[AliceMemory] /important 失败 | %s", e, exc_info=True)
             yield event.plain_result(f"[AliceMemory] 存入失败: {e}")
@@ -256,9 +279,7 @@ class AliceMemoryPlugin(Star):
     # =========================================================================
 
     @filter.command("forget")
-    async def cmd_forget(
-        self, event: AstrMessageEvent, memory_id: str = ""
-    ):
+    async def cmd_forget(self, event: AstrMessageEvent, memory_id: str = ""):
         """删除 L3 记忆。/forget <vector_id>。"""
         if not memory_id.strip():
             yield event.plain_result("[AliceMemory] 用法: /forget <记忆ID>")
@@ -274,9 +295,7 @@ class AliceMemoryPlugin(Star):
     # =========================================================================
 
     @filter.command("show_memory")
-    async def cmd_show_memory(
-        self, event: AstrMessageEvent, *, query: str = ""
-    ):
+    async def cmd_show_memory(self, event: AstrMessageEvent, *, query: str = ""):
         """搜索 L3 记忆。/show_memory <查询>。"""
         if not query.strip():
             yield event.plain_result("[AliceMemory] 用法: /show_memory <查询>")
@@ -313,7 +332,10 @@ class AliceMemoryPlugin(Star):
     # =========================================================================
 
     async def _build_feedback(
-        self, user_id: str, default_text: str, umo: str = "",
+        self,
+        user_id: str,
+        default_text: str,
+        umo: str = "",
     ) -> str:
         """根据 manual_compress_feedback_mode 生成压缩反馈。"""
         mode = self.plugin_config.manual_compress_feedback_mode
@@ -331,14 +353,17 @@ class AliceMemoryPlugin(Star):
             try:
                 prompt = self.plugin_config.manual_compress_llm_prompt
                 kwargs = {
-                    "chat_provider_id": await self.context.get_current_chat_provider_id(umo),
+                    "chat_provider_id": await self.context.get_current_chat_provider_id(
+                        umo
+                    ),
                     "max_tokens": self.plugin_config.llm_max_tokens,
                     "temperature": self.plugin_config.llm_temperature,
                 }
                 if self.plugin_config.compress_model:
                     kwargs["model"] = self.plugin_config.compress_model
                 resp = await self.context.llm_generate(
-                    prompt=prompt, **kwargs,
+                    prompt=prompt,
+                    **kwargs,
                 )
                 text = getattr(resp, "completion_text", "") or ""
                 if text.strip():

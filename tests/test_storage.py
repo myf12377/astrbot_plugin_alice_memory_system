@@ -79,6 +79,7 @@ class TestMemoryStorage:
         storage.append_dialogue("user1", "user", "Msg 1")
         storage.append_dialogue("user1", "assistant", "Msg 2")
         import time
+
         future_ts = time.time() + 3600
         marked = storage.mark_dialogues_compressed("user1", future_ts)
         assert marked == 2

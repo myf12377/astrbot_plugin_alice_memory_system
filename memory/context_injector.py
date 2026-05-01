@@ -53,7 +53,9 @@ class ContextInjector:
     # ==================================================================
 
     async def inject_all(
-        self, user_id: str, request: ProviderRequest,
+        self,
+        user_id: str,
+        request: ProviderRequest,
     ) -> None:
         """按 config 开关调度四条注入管线。"""
         if self._config.inject_l1:
@@ -70,7 +72,9 @@ class ContextInjector:
     # ==================================================================
 
     async def inject_l1(
-        self, user_id: str, request: ProviderRequest,
+        self,
+        user_id: str,
+        request: ProviderRequest,
     ) -> None:
         """注入今日 L1 对话到 request.contexts（无标记，自然消失）。"""
         dialogues = self._storage.get_today_dialogues(user_id)
@@ -78,17 +82,21 @@ class ContextInjector:
             return
 
         for d in dialogues[: self._config.l1_search_limit]:
-            request.contexts.append({
-                "role": d.role,
-                "content": d.content,
-            })
+            request.contexts.append(
+                {
+                    "role": d.role,
+                    "content": d.content,
+                }
+            )
 
     # ==================================================================
     # L2 Path A — 渐进周摘要
     # ==================================================================
 
     async def inject_l2_path_a(
-        self, user_id: str, request: ProviderRequest,
+        self,
+        user_id: str,
+        request: ProviderRequest,
     ) -> None:
         """注入周摘要到 extra_user_content_parts [周摘要]。
 
@@ -111,11 +119,14 @@ class ContextInjector:
     # ==================================================================
 
     async def inject_l2_path_b(
-        self, user_id: str, request: ProviderRequest,
+        self,
+        user_id: str,
+        request: ProviderRequest,
     ) -> None:
         """注入最近 N 天日摘要到 extra_user_content_parts [L2记忆]（周一不跳过）。"""
         summaries = self._storage.get_daily_summaries(
-            user_id, last=self._config.l2_daily_inject_count,
+            user_id,
+            last=self._config.l2_daily_inject_count,
         )
         if not summaries:
             return
@@ -136,7 +147,9 @@ class ContextInjector:
     # ==================================================================
 
     async def inject_l3(
-        self, user_id: str, request: ProviderRequest,
+        self,
+        user_id: str,
+        request: ProviderRequest,
     ) -> None:
         """语义检索 L3 记忆，注入到 extra_user_content_parts [L3记忆]。"""
         if not self._vector_store:
@@ -176,6 +189,7 @@ class ContextInjector:
     def _clean_marker(request: ProviderRequest, marker: str) -> None:
         """移除 extra_user_content_parts 中以指定 marker 开头的旧内容。"""
         request.extra_user_content_parts = [
-            p for p in request.extra_user_content_parts
+            p
+            for p in request.extra_user_content_parts
             if not getattr(p, "text", "").startswith(marker)
         ]

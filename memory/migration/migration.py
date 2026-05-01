@@ -118,7 +118,11 @@ class MigrationModule:
         for s in import_data.get("l2_summaries", []):
             s_item = L2SummaryItem.from_dict(s)
             storage.add_summary(
-                user_id, s_item.date, s_item.summary, s_item.importance, s_item.hidden,
+                user_id,
+                s_item.date,
+                s_item.summary,
+                s_item.importance,
+                s_item.hidden,
             )
             l2_count += 1
 

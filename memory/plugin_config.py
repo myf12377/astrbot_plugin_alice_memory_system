@@ -42,15 +42,20 @@ class PluginConfig(BaseModel):
 
     l1_enabled: bool = Field(default=True, description="L1 存储开关")
     l1_retention_days: int = Field(
-        default=3, ge=1, le=30,
+        default=3,
+        ge=1,
+        le=30,
         description="L1 磁盘保留天数，为 Path B 提供原料窗口",
     )
     l1_search_limit: int = Field(
-        default=10, ge=1, le=50,
+        default=10,
+        ge=1,
+        le=50,
         description="注入上下文的 L1 对话最大条数",
     )
     store_media_content: bool = Field(
-        default=True, description="存储媒体内容描述",
+        default=True,
+        description="存储媒体内容描述",
     )
 
     # ==========================================================================
@@ -97,15 +102,20 @@ class PluginConfig(BaseModel):
         description="Path B 压缩 prompt 模板（提取日摘要模式）",
     )
     l2_ttl: int = Field(
-        default=7, ge=1, le=90,
+        default=7,
+        ge=1,
+        le=90,
         description="L2 日摘要保留天数",
     )
     l2_daily_inject_count: int = Field(
-        default=3, ge=0, le=14,
+        default=3,
+        ge=0,
+        le=14,
         description="注入上下文的日摘要天数（最近 N 天）",
     )
     l2_summary_hidden: bool = Field(
-        default=False, description="摘要默认隐藏（不注入前端对话）",
+        default=False,
+        description="摘要默认隐藏（不注入前端对话）",
     )
 
     # ==========================================================================
@@ -114,7 +124,8 @@ class PluginConfig(BaseModel):
 
     l2_enabled: bool = Field(default=True, description="L2 记忆总开关")
     compact_progress_feedback: bool = Field(
-        default=True, description="压缩时显示进度提示",
+        default=True,
+        description="压缩时显示进度提示",
     )
     manual_compress_feedback_mode: str = Field(
         default="llm",
@@ -143,31 +154,45 @@ class PluginConfig(BaseModel):
         description="向量嵌入模型：auto（AstrBot EmbeddingProvider）/ chroma（内置）",
     )
     importance_threshold: int = Field(
-        default=8, ge=0, le=10,
+        default=8,
+        ge=0,
+        le=10,
         description="重要性阈值，≥此值晋升 L3",
     )
     l3_merge_similarity: float = Field(
-        default=0.9, ge=0.0, le=1.0,
+        default=0.9,
+        ge=0.0,
+        le=1.0,
         description="向量相似度合并阈值",
     )
     l3_merge_interval_days: int = Field(
-        default=30, ge=1, le=365,
+        default=30,
+        ge=1,
+        le=365,
         description="全量合并周期（天）",
     )
     l3_decay_rate: float = Field(
-        default=0.995, ge=0.9, le=1.0,
+        default=0.995,
+        ge=0.9,
+        le=1.0,
         description="每日衰减系数",
     )
     l3_access_bonus: float = Field(
-        default=0.3, ge=0.0, le=5.0,
+        default=0.3,
+        ge=0.0,
+        le=5.0,
         description="每次访问的生命加成",
     )
     l3_delete_threshold: float = Field(
-        default=3.0, ge=0.0, le=10.0,
+        default=3.0,
+        ge=0.0,
+        le=10.0,
         description="有效分数低于此值删除",
     )
     l3_gray_zone_upper: float = Field(
-        default=5.0, ge=3.0, le=10.0,
+        default=5.0,
+        ge=3.0,
+        le=10.0,
         description="灰区上界，灰区内触发 LLM 重评",
     )
 
@@ -184,11 +209,15 @@ class PluginConfig(BaseModel):
         description="重要性分析用的 LLM 模型，为空使用默认模型",
     )
     llm_max_tokens: int = Field(
-        default=1024, ge=64, le=32768,
+        default=1024,
+        ge=64,
+        le=32768,
         description="LLM 最大 Token 数",
     )
     llm_temperature: float = Field(
-        default=0.7, ge=0.0, le=2.0,
+        default=0.7,
+        ge=0.0,
+        le=2.0,
         description="LLM 温度参数",
     )
 

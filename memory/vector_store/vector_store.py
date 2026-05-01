@@ -63,12 +63,14 @@ class VectorStore:
     # ------------------------------------------------------------------
 
     async def _call_embedding_func_async(
-        self, texts: list[str],
+        self,
+        texts: list[str],
     ) -> list[list[float]]:
         """调用 embedding 函数（兼容同步/异步）。"""
         if self._embedding_func is None:
             return []
         import inspect
+
         if inspect.iscoroutinefunction(self._embedding_func):
             return await self._embedding_func(texts)
         loop = asyncio.get_event_loop()
@@ -88,7 +90,9 @@ class VectorStore:
     # ==================================================================
 
     async def add_memory(
-        self, user_id: str, content: str,
+        self,
+        user_id: str,
+        content: str,
         metadata: dict[str, Any] | None = None,
     ) -> str:
         """添加记忆到向量存储。
@@ -127,7 +131,10 @@ class VectorStore:
         return vector_id
 
     async def search(
-        self, user_id: str, query: str, top_k: int = 5,
+        self,
+        user_id: str,
+        query: str,
+        top_k: int = 5,
     ) -> list[dict[str, Any]]:
         """语义搜索用户记忆（同时更新访问计数）。
 
@@ -167,12 +174,18 @@ class VectorStore:
                 ids_to_update.append(vid)
                 new_metadatas.append(meta)
 
-                memories.append({
-                    "id": vid,
-                    "content": results["documents"][0][i] if results["documents"] else "",
-                    "metadata": meta,
-                    "distance": results["distances"][0][i] if results["distances"] else 0.0,
-                })
+                memories.append(
+                    {
+                        "id": vid,
+                        "content": results["documents"][0][i]
+                        if results["documents"]
+                        else "",
+                        "metadata": meta,
+                        "distance": results["distances"][0][i]
+                        if results["distances"]
+                        else 0.0,
+                    }
+                )
 
             # 批量更新访问信息
             if ids_to_update:
@@ -201,11 +214,17 @@ class VectorStore:
         memories: list[dict[str, Any]] = []
         if results["ids"]:
             for i, vid in enumerate(results["ids"]):
-                memories.append({
-                    "id": vid,
-                    "content": results["documents"][i] if results["documents"] else "",
-                    "metadata": results["metadatas"][i] if results["metadatas"] else {},
-                })
+                memories.append(
+                    {
+                        "id": vid,
+                        "content": results["documents"][i]
+                        if results["documents"]
+                        else "",
+                        "metadata": results["metadatas"][i]
+                        if results["metadatas"]
+                        else {},
+                    }
+                )
         return memories
 
     def delete_user_memories(self, user_id: str) -> int:
@@ -284,8 +303,9 @@ class VectorStore:
             except (ValueError, TypeError):
                 days = 0
 
-            effective = (importance * (decay_rate ** days)
-                         + min(access_count, 10) * access_bonus)
+            effective = (
+                importance * (decay_rate**days) + min(access_count, 10) * access_bonus
+            )
 
             if effective < delete_threshold:
                 to_delete.append(m["id"])
@@ -339,7 +359,10 @@ class VectorStore:
     # ==================================================================
 
     def find_similar(
-        self, user_id: str, embedding: list[float], threshold: float,
+        self,
+        user_id: str,
+        embedding: list[float],
+        threshold: float,
     ) -> list[dict[str, Any]]:
         """查找与给定向量相似的用户记忆。
 
@@ -372,18 +395,28 @@ class VectorStore:
                 # ChromaDB cosine: distance = 1 - similarity
                 similarity = 1.0 - distance
                 if similarity >= threshold:
-                    similar.append({
-                        "id": vid,
-                        "content": results["documents"][0][i] if results["documents"] else "",
-                        "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                        "similarity": round(similarity, 4),
-                    })
+                    similar.append(
+                        {
+                            "id": vid,
+                            "content": results["documents"][0][i]
+                            if results["documents"]
+                            else "",
+                            "metadata": results["metadatas"][0][i]
+                            if results["metadatas"]
+                            else {},
+                            "similarity": round(similarity, 4),
+                        }
+                    )
 
         similar.sort(key=lambda x: x["similarity"], reverse=True)
         return similar
 
     async def find_similar_by_content(
-        self, user_id: str, content: str, threshold: float, top_k: int = 20,
+        self,
+        user_id: str,
+        content: str,
+        threshold: float,
+        top_k: int = 20,
     ) -> list[dict[str, Any]]:
         """按内容文本查找相似记忆。
 
@@ -423,18 +456,28 @@ class VectorStore:
                 distance = results["distances"][0][i] if results["distances"] else 1.0
                 similarity = 1.0 - distance
                 if similarity >= threshold:
-                    similar.append({
-                        "id": vid,
-                        "content": results["documents"][0][i] if results["documents"] else "",
-                        "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                        "similarity": round(similarity, 4),
-                    })
+                    similar.append(
+                        {
+                            "id": vid,
+                            "content": results["documents"][0][i]
+                            if results["documents"]
+                            else "",
+                            "metadata": results["metadatas"][0][i]
+                            if results["metadatas"]
+                            else {},
+                            "similarity": round(similarity, 4),
+                        }
+                    )
 
         similar.sort(key=lambda x: x["similarity"], reverse=True)
         return similar
 
     async def merge_memories(
-        self, vid1: str, vid2: str, merged_content: str, new_score: float,
+        self,
+        vid1: str,
+        vid2: str,
+        merged_content: str,
+        new_score: float,
     ) -> str:
         """合并两条记忆：删旧建新。
 

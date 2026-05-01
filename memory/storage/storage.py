@@ -224,7 +224,10 @@ class MemoryStorage:
     # ==================================================================
 
     def append_dialogue(
-        self, user_id: str, role: str, content: str,
+        self,
+        user_id: str,
+        role: str,
+        content: str,
     ) -> L1MemoryItem:
         """添加一条对话到 L1。
 
@@ -250,7 +253,9 @@ class MemoryStorage:
         return item
 
     def get_l1_dialogues(
-        self, user_id: str, date: str | None = None,
+        self,
+        user_id: str,
+        date: str | None = None,
     ) -> list[L1MemoryItem]:
         """获取用户 L1 对话。
 
@@ -263,10 +268,7 @@ class MemoryStorage:
         """
         items = self._load_all_l1(user_id)
         if date:
-            items = [
-                i for i in items
-                if _ts_to_date(i.timestamp) == date
-            ]
+            items = [i for i in items if _ts_to_date(i.timestamp) == date]
         return items
 
     def get_today_dialogues(self, user_id: str) -> list[L1MemoryItem]:
@@ -286,7 +288,10 @@ class MemoryStorage:
         return False
 
     def update_l1_dialogue_timestamp(
-        self, user_id: str, message_id: str, timestamp: float,
+        self,
+        user_id: str,
+        message_id: str,
+        timestamp: float,
     ) -> bool:
         """更新单条 L1 对话的时间戳（供测试用）。"""
         path = self._get_l1_path(user_id)
@@ -299,7 +304,9 @@ class MemoryStorage:
         return False
 
     def delete_old_l1_dialogues(
-        self, user_id: str, retention_days: int | None = None,
+        self,
+        user_id: str,
+        retention_days: int | None = None,
     ) -> int:
         """删除超过保留天数的 L1 对话。
 
@@ -324,7 +331,9 @@ class MemoryStorage:
         return removed
 
     def mark_dialogues_compressed(
-        self, user_id: str, before_ts: float,
+        self,
+        user_id: str,
+        before_ts: float,
     ) -> int:
         """将指定时间之前的对话标记为已压缩。
 
@@ -351,8 +360,12 @@ class MemoryStorage:
     # ==================================================================
 
     def add_summary(
-        self, user_id: str, date: str, summary: str,
-        importance: int, hidden: bool = False,
+        self,
+        user_id: str,
+        date: str,
+        summary: str,
+        importance: int,
+        hidden: bool = False,
     ) -> L2SummaryItem:
         """添加/覆盖指定日期的 L2 摘要。
 
@@ -384,7 +397,10 @@ class MemoryStorage:
         return item
 
     def get_daily_summaries(
-        self, user_id: str, *, last: int | None = None,
+        self,
+        user_id: str,
+        *,
+        last: int | None = None,
     ) -> list[L2SummaryItem]:
         """获取用户 L2 日摘要。
 
@@ -402,7 +418,8 @@ class MemoryStorage:
         return items
 
     def get_l2_summaries_for_date(
-        self, date: str,
+        self,
+        date: str,
     ) -> list[L2SummaryItem]:
         """按日期查询 L2 摘要（跨用户，用于调度器遍历）。"""
         results: list[L2SummaryItem] = []
@@ -413,7 +430,9 @@ class MemoryStorage:
         return results
 
     def delete_old_summaries(
-        self, user_id: str, ttl: int | None = None,
+        self,
+        user_id: str,
+        ttl: int | None = None,
     ) -> int:
         """删除超过 TTL 天的 L2 摘要。
 
@@ -460,7 +479,10 @@ class MemoryStorage:
         return data[0] if isinstance(data, list) else data
 
     def set_weekly_summary(
-        self, user_id: str, summary: str, week_start: str,
+        self,
+        user_id: str,
+        summary: str,
+        week_start: str,
     ) -> None:
         """写入/覆盖用户周摘要。
 
@@ -494,7 +516,9 @@ class MemoryStorage:
     # ==================================================================
 
     def add_l3_memory(
-        self, user_id: str, content: str,
+        self,
+        user_id: str,
+        content: str,
         metadata: dict[str, Any] | None = None,
     ) -> str:
         """添加 L3 记忆。

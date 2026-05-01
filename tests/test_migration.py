@@ -22,6 +22,7 @@ class TestMigrationModule:
     def temp_dir(self) -> Iterator[Path]:
         """创建测试用临时目录。"""
         import shutil
+
         tmp = tempfile.mkdtemp()
         yield Path(tmp)
         shutil.rmtree(tmp, ignore_errors=True)
@@ -92,9 +93,7 @@ class TestMigrationModule:
         with pytest.raises(ValueError, match="用户ID不匹配"):
             migration.import_astrmem("user2", export_path)
 
-    async def test_export_chroma(
-        self, migration: MigrationModule
-    ) -> None:
+    async def test_export_chroma(self, migration: MigrationModule) -> None:
         """测试导出 ChromaDB 格式。"""
         import shutil
         from memory.vector_store.vector_store import VectorStore
@@ -111,9 +110,7 @@ class TestMigrationModule:
         finally:
             shutil.rmtree(output_dir, ignore_errors=True)
 
-    async def test_import_chroma(
-        self, migration: MigrationModule
-    ) -> None:
+    async def test_import_chroma(self, migration: MigrationModule) -> None:
         """测试导入 ChromaDB 格式。"""
         import shutil
         from memory.vector_store.vector_store import VectorStore

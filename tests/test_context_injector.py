@@ -10,7 +10,12 @@ import pytest
 
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.agent.message import TextPart
-from memory.context_injector import ContextInjector, L2_PATH_A_MARKER, L2_PATH_B_MARKER, L3_MARKER
+from memory.context_injector import (
+    ContextInjector,
+    L2_PATH_A_MARKER,
+    L2_PATH_B_MARKER,
+    L3_MARKER,
+)
 from memory.plugin_config import PluginConfig
 from memory.storage.storage import L1MemoryItem, L2SummaryItem
 
@@ -21,9 +26,13 @@ class TestContextInjector:
     @pytest.fixture
     def config(self) -> PluginConfig:
         return PluginConfig(
-            inject_l1=True, inject_l2_path_a=True,
-            inject_l2_path_b=True, inject_l3=True,
-            l1_search_limit=10, l2_daily_inject_count=3, l3_merge_similarity=0.9,
+            inject_l1=True,
+            inject_l2_path_a=True,
+            inject_l2_path_b=True,
+            inject_l3=True,
+            l1_search_limit=10,
+            l2_daily_inject_count=3,
+            l3_merge_similarity=0.9,
         )
 
     @pytest.fixture
@@ -42,7 +51,11 @@ class TestContextInjector:
 
     @pytest.fixture
     def injector(
-        self, mock_storage, mock_vector_store, mock_identity, config,
+        self,
+        mock_storage,
+        mock_vector_store,
+        mock_identity,
+        config,
     ) -> ContextInjector:
         return ContextInjector(mock_storage, mock_vector_store, mock_identity, config)
 
@@ -54,7 +67,9 @@ class TestContextInjector:
     # ================================================================
 
     async def test_inject_l1(
-        self, injector: ContextInjector, mock_storage: MagicMock,
+        self,
+        injector: ContextInjector,
+        mock_storage: MagicMock,
     ) -> None:
         mock_storage.get_today_dialogues.return_value = [
             L1MemoryItem("m1", "u1", "user", "Hello", 1000.0),
@@ -66,7 +81,9 @@ class TestContextInjector:
         assert req.contexts[0]["role"] == "user"
 
     async def test_inject_l1_empty(
-        self, injector: ContextInjector, mock_storage: MagicMock,
+        self,
+        injector: ContextInjector,
+        mock_storage: MagicMock,
     ) -> None:
         mock_storage.get_today_dialogues.return_value = []
         req = self.make_request()
@@ -77,7 +94,9 @@ class TestContextInjector:
     # ================================================================
 
     async def test_inject_l2_path_a(
-        self, injector: ContextInjector, mock_storage: MagicMock,
+        self,
+        injector: ContextInjector,
+        mock_storage: MagicMock,
     ) -> None:
         mock_storage.get_weekly_summary.return_value = {
             "summary": "本周讨论了记忆系统架构",
@@ -88,7 +107,9 @@ class TestContextInjector:
         assert L2_PATH_A_MARKER in str(req.extra_user_content_parts[0])
 
     async def test_inject_l2_path_a_empty(
-        self, injector: ContextInjector, mock_storage: MagicMock,
+        self,
+        injector: ContextInjector,
+        mock_storage: MagicMock,
     ) -> None:
         mock_storage.get_weekly_summary.return_value = None
         req = self.make_request()
@@ -99,7 +120,9 @@ class TestContextInjector:
     # ================================================================
 
     async def test_inject_l2_path_b(
-        self, injector: ContextInjector, mock_storage: MagicMock,
+        self,
+        injector: ContextInjector,
+        mock_storage: MagicMock,
     ) -> None:
         mock_storage.get_daily_summaries.return_value = [
             L2SummaryItem("s1", "u1", "2026-04-24", "昨天讨论了...", 5, 1000.0, False),
@@ -110,7 +133,9 @@ class TestContextInjector:
         assert L2_PATH_B_MARKER in str(req.extra_user_content_parts[0])
 
     async def test_inject_l2_path_b_empty(
-        self, injector: ContextInjector, mock_storage: MagicMock,
+        self,
+        injector: ContextInjector,
+        mock_storage: MagicMock,
     ) -> None:
         mock_storage.get_daily_summaries.return_value = []
         req = self.make_request()
@@ -121,7 +146,9 @@ class TestContextInjector:
     # ================================================================
 
     async def test_inject_l3(
-        self, injector: ContextInjector, mock_vector_store: MagicMock,
+        self,
+        injector: ContextInjector,
+        mock_vector_store: MagicMock,
     ) -> None:
         mock_vector_store.search.return_value = [
             {"content": "用户喜欢咖啡", "distance": 0.05},
@@ -132,7 +159,10 @@ class TestContextInjector:
         assert L3_MARKER in str(req.extra_user_content_parts[0])
 
     async def test_inject_l3_no_vector_store(
-        self, mock_storage, mock_identity, config,
+        self,
+        mock_storage,
+        mock_identity,
+        config,
     ) -> None:
         injector = ContextInjector(mock_storage, None, mock_identity, config)
         req = self.make_request(prompt="test")
@@ -140,7 +170,8 @@ class TestContextInjector:
         assert len(req.extra_user_content_parts) == 0
 
     async def test_inject_l3_empty_query(
-        self, injector: ContextInjector,
+        self,
+        injector: ContextInjector,
     ) -> None:
         req = self.make_request(prompt="")
         await injector.inject_l3("u1", req)
@@ -150,7 +181,9 @@ class TestContextInjector:
     # ================================================================
 
     async def test_inject_all(
-        self, injector: ContextInjector, mock_storage: MagicMock,
+        self,
+        injector: ContextInjector,
+        mock_storage: MagicMock,
         mock_vector_store: MagicMock,
     ) -> None:
         mock_storage.get_today_dialogues.return_value = [
@@ -169,13 +202,20 @@ class TestContextInjector:
         assert len(req.extra_user_content_parts) == 3
 
     async def test_inject_all_disabled(
-        self, mock_storage, mock_vector_store, mock_identity,
+        self,
+        mock_storage,
+        mock_vector_store,
+        mock_identity,
     ) -> None:
         config = PluginConfig(
-            inject_l1=False, inject_l2_path_a=False,
-            inject_l2_path_b=False, inject_l3=False,
+            inject_l1=False,
+            inject_l2_path_a=False,
+            inject_l2_path_b=False,
+            inject_l3=False,
         )
-        injector = ContextInjector(mock_storage, mock_vector_store, mock_identity, config)
+        injector = ContextInjector(
+            mock_storage, mock_vector_store, mock_identity, config
+        )
         req = self.make_request()
         await injector.inject_all("u1", req)
         assert len(req.contexts) == 0
