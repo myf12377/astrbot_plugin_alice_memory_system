@@ -2,7 +2,7 @@
 
 `astrbot_alice_memory_modul` — 三层记忆存储系统（L1原始对话 / L2双路中期记忆 / L3长期向量记忆）。
 
-> **v2.1.1** — 定时任务 async 修复，6 段调度全部注册成功。
+> **v2.1.2** — 定时任务 LLM 调用修复，默认 provider fallback + Path A 周摘要防污染。
 
 ## AI 行为规则
 
