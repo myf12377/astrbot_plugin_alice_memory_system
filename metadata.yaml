@@ -1,21 +1,20 @@
 name: astrbot_alice_memory_modul
 display_name: Alice Memory
 desc: |
-  Alice 三层记忆系统 - 基于 LLM 的智能记忆管理插件 (v2.0)
+  Alice 三层记忆系统 - 基于 LLM 的智能记忆管理插件 (v2.2.0)
 
   记忆层次:
-  - L1 原始对话: 日内短期记忆，自动存储对话记录
-  - L2 Path A 渐进周摘要: 上下文记忆，每日凌晨合并压缩
-  - L2 Path B 每日磁盘摘要: 历史记忆，独立日摘要保留7天
+  - L1 原始对话: 最近 N 轮全量注入（按日期分组），磁盘保存 200 轮
+  - L2 中期记忆: 周摘要 + 非本周日摘要，去重合并注入
   - L3 长期向量记忆: 重要性评估 + 语义检索 + 衰减模型（艾宾浩斯遗忘曲线）
 
   功能特性:
-  - 四管线独立注入: L1/L2-A/L2-B/L3 各自管理上下文标记
+  - 三管线注入: L1（全量分组）/ L2（去重合并）/ L3（按需检索）
   - 自然遗忘曲线: 衰减公式 effective = importance × 0.995^days + 访问加成
   - 手动压缩: /compact 命令支持 Path A/B 压缩
   - 数据迁移: 支持 .astrmem 和 ChromaDB 导出/导入
 author: Alice
-version: 2.1.3
+version: 2.2.0
 astrbot_version: ">=4.16"
 support_platforms:
   - qq_official

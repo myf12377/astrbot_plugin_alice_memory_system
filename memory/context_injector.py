@@ -1,15 +1,14 @@
 """
-记忆上下文注入器 — 四管线独立注入。
+记忆上下文注入器 — 三管线独立注入（v2.2.0）。
 
-L1  → request.contexts（无标记，自然消失）
-L2-A → extra_user_content_parts（[周摘要]，覆盖式）
-L2-B → extra_user_content_parts（[L2记忆]，覆盖式）
-L3  → extra_user_content_parts（[L3记忆]，覆盖式）
+L1  → request.contexts（按日期分组，system 标记日期边界）
+L2  → extra_user_content_parts（[L2记忆]，周摘要 + 非本周日摘要，去重合并）
+L3  → extra_user_content_parts（[L3记忆]，按需语义检索）
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -24,13 +23,12 @@ if TYPE_CHECKING:
 
 
 # 上下文中的记忆标记（管线级自主覆盖）
-L2_PATH_A_MARKER = "[周摘要]"
-L2_PATH_B_MARKER = "[L2记忆]"
+L2_MARKER = "[L2记忆]"
 L3_MARKER = "[L3记忆]"
 
 
 class ContextInjector:
-    """记忆上下文注入器 — 四管线独立管理。
+    """记忆上下文注入器 — 三管线独立管理。
 
     设计原则：每条管线持有独立标记，只管理自己的内容，
     互不污染。注入只读，不写。
@@ -57,18 +55,20 @@ class ContextInjector:
         user_id: str,
         request: ProviderRequest,
     ) -> None:
-        """按 config 开关调度四条注入管线。"""
-        if self._config.inject_l1:
-            await self.inject_l1(user_id, request)
-        if self._config.inject_l2_path_a:
-            await self.inject_l2_path_a(user_id, request)
-        if self._config.inject_l2_path_b:
-            await self.inject_l2_path_b(user_id, request)
+        """按 config 开关调度三条注入管线。
+
+        注入顺序：L2（中期）→ L3（长期）→ L1（短期），
+        短期记忆最靠近当前对话，权重最高。
+        """
+        if self._config.inject_l2_path_a or self._config.inject_l2_path_b:
+            await self.inject_l2_merged(user_id, request)
         if self._config.inject_l3:
             await self.inject_l3(user_id, request)
+        if self._config.inject_l1:
+            await self.inject_l1(user_id, request)
 
     # ==================================================================
-    # L1 — 日内原始对话
+    # L1 — 日内原始对话（全量分组注入）
     # ==================================================================
 
     async def inject_l1(
@@ -76,70 +76,63 @@ class ContextInjector:
         user_id: str,
         request: ProviderRequest,
     ) -> None:
-        """注入今日 L1 对话到 request.contexts（无标记，自然消失）。"""
-        dialogues = self._storage.get_today_dialogues(user_id)
-        if not dialogues:
-            return
+        """注入最近 N 轮 L1 对话到 request.contexts。
 
-        for d in dialogues[: self._config.l1_search_limit]:
-            request.contexts.append(
-                {
-                    "role": d.role,
-                    "content": d.content,
-                }
-            )
-
-    # ==================================================================
-    # L2 Path A — 渐进周摘要
-    # ==================================================================
-
-    async def inject_l2_path_a(
-        self,
-        user_id: str,
-        request: ProviderRequest,
-    ) -> None:
-        """注入周摘要到 extra_user_content_parts [周摘要]。
-
-        周一跳过（Scheduler 凌晨已清空）。
+        按日期分组，每天插入 system 日期标记。
+        l1_inject_rounds=0 时跳过。
         """
-        if self._is_monday():
+        rounds = self._storage.get_recent_rounds(user_id)
+        if not rounds:
             return
 
-        weekly = self._storage.get_weekly_summary(user_id)
-        if not weekly or not weekly.get("summary"):
-            return
-
-        self._clean_marker(request, L2_PATH_A_MARKER)
-        request.extra_user_content_parts.append(
-            TextPart(text=f"{L2_PATH_A_MARKER}\n本周摘要：{weekly['summary']}"),
-        )
+        for msg in rounds:
+            request.contexts.append(msg)
 
     # ==================================================================
-    # L2 Path B — 每日磁盘摘要
+    # L2 — 中期记忆（周摘要 + 非本周日摘要，去重合并）
     # ==================================================================
 
-    async def inject_l2_path_b(
+    async def inject_l2_merged(
         self,
         user_id: str,
         request: ProviderRequest,
     ) -> None:
-        """注入最近 N 天日摘要到 extra_user_content_parts [L2记忆]（周一不跳过）。"""
-        summaries = self._storage.get_daily_summaries(
-            user_id,
-            last=self._config.l2_daily_inject_count,
-        )
-        if not summaries:
+        """注入合并的 L2 记忆到 extra_user_content_parts [L2记忆]。
+
+        合并逻辑：
+        - 周摘要（非周一才注入，周一凌晨已清空）
+        - 非本周的日摘要（避免与周摘要重复）
+        """
+        parts: list[str] = []
+
+        # 周摘要（周一跳过）
+        if self._config.inject_l2_path_a and not self._is_monday():
+            weekly = self._storage.get_weekly_summary(user_id)
+            if weekly and weekly.get("summary"):
+                parts.append(f"[周摘要] {weekly['summary']}")
+
+        # 非本周的日摘要
+        if self._config.inject_l2_path_b:
+            week_start = self._get_week_start()
+            all_summaries = self._storage.get_daily_summaries(
+                user_id,
+                last=self._config.l2_daily_inject_count,
+            )
+            # 排除本周摘要（周摘要已包含）和隐藏项
+            for s in all_summaries:
+                if s.hidden:
+                    continue
+                if s.date >= week_start:
+                    continue  # 本周的跳过（周摘要覆盖）
+                parts.append(f"[{s.date}] {s.summary}")
+
+        if not parts:
             return
 
-        combined = "\n".join(
-            f"[{s.date}] {s.summary}" for s in summaries if not s.hidden
-        )
-        if not combined:
-            return
-
-        self._clean_marker(request, L2_PATH_B_MARKER)
+        combined = "\n\n".join(parts)
+        self._clean_marker(request, L2_MARKER)
         request.extra_user_content_parts.append(
-            TextPart(text=f"{L2_PATH_B_MARKER}\n{combined}"),
+            TextPart(text=f"{L2_MARKER}\n{combined}"),
         )
 
     # ==================================================================
@@ -159,7 +152,6 @@ class ContextInjector:
         if not query:
             return
 
-        # 修复：参数顺序 → search(user_id, query, top_k)
         results = await self._vector_store.search(user_id, query, top_k=3)
 
         self._clean_marker(request, L3_MARKER)
@@ -167,7 +159,6 @@ class ContextInjector:
         threshold = self._config.l3_merge_similarity
         for r in results:
             score = r.get("distance", 0)
-            # distance 越低越相似（cosine distance = 1 - similarity）
             similarity = 1.0 - score
             if similarity >= threshold:
                 content = r.get("content", "")
@@ -184,6 +175,14 @@ class ContextInjector:
     def _is_monday() -> bool:
         cst = ZoneInfo("Asia/Shanghai")
         return datetime.now(cst).weekday() == 0
+
+    @staticmethod
+    def _get_week_start() -> str:
+        """获取本周一的日期字符串（CST）。"""
+        cst = ZoneInfo("Asia/Shanghai")
+        now = datetime.now(cst)
+        monday = now - timedelta(days=now.weekday())
+        return monday.strftime("%Y-%m-%d")
 
     @staticmethod
     def _clean_marker(request: ProviderRequest, marker: str) -> None:

@@ -355,6 +355,113 @@ class MemoryStorage:
         path = self._get_l1_path(user_id)
         return [L1MemoryItem.from_dict(d) for d in self._load_json(path)]
 
+    def get_recent_rounds(
+        self,
+        user_id: str,
+        max_rounds: int | None = None,
+    ) -> list[dict[str, str]]:
+        """获取最近 N 轮 L1 对话，按日期分组。
+
+        1 轮 = 1 条 user + 1 条 assistant。按时间倒序取最近 N 轮，
+        然后按日期正序分组返回，每天插入日期标记。
+
+        Args:
+            user_id: 用户标识符。
+            max_rounds: 最大轮数，为 None 使用 config.l1_inject_rounds。
+
+        Returns:
+            list[dict]，每个 dict 有 role/content 键。
+            日期变更处插入 {"role": "system", "content": "[YYYY-MM-DD 对话]"}。
+            max_rounds=0 时返回空列表。
+        """
+        if max_rounds is None:
+            max_rounds = self._config.l1_inject_rounds
+        if max_rounds <= 0:
+            return []
+
+        items = self._load_all_l1(user_id)
+        if not items:
+            return []
+
+        # 按时间正序排列（最早在前）
+        items.sort(key=lambda i: i.timestamp)
+
+        # 配对：尝试将 user 和 assistant 配对为一轮
+        rounds: list[list[L1MemoryItem]] = []
+        current_round: list[L1MemoryItem] = []
+        for item in items:
+            if item.role == "user" and current_round:
+                rounds.append(current_round)
+                current_round = [item]
+            else:
+                current_round.append(item)
+        if current_round:
+            rounds.append(current_round)
+
+        # 取最近 N 轮
+        rounds = rounds[-max_rounds:]
+
+        # 展平并按日期分组插入标记
+        result: list[dict[str, str]] = []
+        current_date = ""
+        for rnd in rounds:
+            for item in rnd:
+                item_date = _ts_to_date(item.timestamp)
+                if item_date != current_date:
+                    current_date = item_date
+                    result.append(
+                        {"role": "system", "content": f"[{current_date} 对话]"}
+                    )
+                result.append({"role": item.role, "content": item.content})
+
+        return result
+
+    def trim_to_recent_rounds(
+        self,
+        user_id: str,
+        keep_rounds: int | None = None,
+    ) -> int:
+        """裁剪 L1 只保留最近 N 轮。
+
+        Args:
+            user_id: 用户标识符。
+            keep_rounds: 保留轮数，为 None 使用 config.l1_save_rounds。
+
+        Returns:
+            删除的条目数。
+        """
+        if keep_rounds is None:
+            keep_rounds = self._config.l1_save_rounds
+
+        path = self._get_l1_path(user_id)
+        data = self._load_json(path)
+        if not data:
+            return 0
+
+        # 按时间正序排列
+        data.sort(key=lambda d: d.get("timestamp", 0))
+
+        # 配对计数
+        rounds: list[list[dict[str, Any]]] = []
+        current_round: list[dict[str, Any]] = []
+        for item in data:
+            if item.get("role") == "user" and current_round:
+                rounds.append(current_round)
+                current_round = [item]
+            else:
+                current_round.append(item)
+        if current_round:
+            rounds.append(current_round)
+
+        # 保留最后 N 轮
+        kept_rounds = rounds[-keep_rounds:]
+        kept_items = [item for rnd in kept_rounds for item in rnd]
+        removed = len(data) - len(kept_items)
+
+        if removed > 0:
+            self._save_json(path, kept_items)
+        return removed
+
     # ==================================================================
     # L2 Path B — 每日磁盘摘要
     # ==================================================================

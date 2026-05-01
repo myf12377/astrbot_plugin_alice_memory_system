@@ -20,12 +20,24 @@
   "l1_retention_days": {
     "type": "int",
     "description": "L1 磁盘保留天数",
-    "default": 3,
+    "default": 7,
     "hint": "范围 1-30。为 Path B 压缩提供原料窗口。"
+  },
+  "l1_save_rounds": {
+    "type": "int",
+    "description": "L1 磁盘保存轮数",
+    "default": 200,
+    "hint": "范围 50-500。1轮=user+assistant。压缩任务素材池，02:00 清理超出部分。"
+  },
+  "l1_inject_rounds": {
+    "type": "int",
+    "description": "L1 注入轮数",
+    "default": 80,
+    "hint": "范围 0-200。0=不注入L1，仅用L2+L3。不能超过 l1_save_rounds。"
   },
   "l1_search_limit": {
     "type": "int",
-    "description": "注入上下文的 L1 对话最大条数",
+    "description": "注入上下文的 L1 对话最大条数（旧字段，保留兼容）",
     "default": 10,
     "hint": "范围 1-50"
   },
@@ -62,7 +74,7 @@
   "l2_daily_inject_count": {
     "type": "int",
     "description": "注入上下文的日摘要天数",
-    "default": 3,
+    "default": 7,
     "hint": "范围 0-14。注入最近 N 天的日摘要到上下文。0=不注入。"
   },
   "manual_compress_feedback_mode": {

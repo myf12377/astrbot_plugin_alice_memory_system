@@ -1,7 +1,7 @@
 """
 调度器模块 — 6 段定时任务编排。
 
-01:00 Path B 日压缩 / 02:00 L1 清理 / 03:00 L3 衰减+灰区重评
+01:00 Path B 日压缩 / 02:00 L1 轮次裁剪 / 03:00 L3 衰减+灰区重评
 04:00 Path A 周压缩 / 周一 05:00 周摘要重置 / 1日06:00 L3 月度合并
 """
 
@@ -58,7 +58,7 @@ class Scheduler:
 
         jobs = [
             ("0 1 * * *", self._safe_wrap(self._compress_daily), "Path B 日压缩"),
-            ("0 2 * * *", self._safe_wrap(self._l1_cleanup), "L1 过期清理"),
+            ("0 2 * * *", self._safe_wrap(self._l1_cleanup), "L1 轮次裁剪"),
             ("0 3 * * *", self._safe_wrap(self._l3_maintenance), "L3 衰减+灰区重评"),
             ("0 4 * * *", self._safe_wrap(self._compress_context), "Path A 周压缩"),
             ("0 5 * * 1", self._safe_wrap(self._reset_weekly), "周一重置周摘要"),
@@ -125,17 +125,23 @@ class Scheduler:
     # ==================================================================
 
     async def _l1_cleanup(self) -> None:
-        logger.info("[AliceMemory] 定时触发 | 02:00 L1 过期清理")
+        logger.info("[AliceMemory] 定时触发 | 02:00 L1 轮次裁剪")
         if not self._config.l1_enabled:
             return
         try:
             total = 0
+            keep = self._config.l1_save_rounds
             for uid in self._identity_module.get_all_users():
-                total += self._storage.delete_old_l1_dialogues(uid)
+                removed = self._storage.trim_to_recent_rounds(uid, keep)
+                total += removed
             if total:
-                logger.info("[AliceMemory] L1 清理 | 删除=%d 条", total)
+                logger.info(
+                    "[AliceMemory] L1 裁剪 | keep_rounds=%d | 删除=%d 条",
+                    keep,
+                    total,
+                )
         except Exception:
-            logger.error("[AliceMemory] L1 清理异常", exc_info=True)
+            logger.error("[AliceMemory] L1 裁剪异常", exc_info=True)
 
     # ==================================================================
     # 03:00 — L3 衰减 + 灰区重评

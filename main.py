@@ -123,11 +123,13 @@ class AliceMemoryPlugin(Star):
                 req.contexts = []
                 logger.info("[AliceMemory] 已清空 AstrBot 对话历史")
 
-            # 注入全部记忆管线
+            # 注入全部记忆管线（L2 → L3 → L1 顺序）
+            l1_count_before = len(req.contexts)
             await self._injector.inject_all(user_id, req)
+            l1_injected = len(req.contexts) - l1_count_before
             logger.info(
-                "[AliceMemory] 注入完成 | contexts=%d | extra_parts=%d",
-                len(req.contexts),
+                "[AliceMemory] 注入完成 | L1=%d条 | extra_parts=%d",
+                l1_injected,
                 len(req.extra_user_content_parts),
             )
 

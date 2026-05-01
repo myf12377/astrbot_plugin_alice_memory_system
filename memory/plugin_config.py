@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 class PluginConfig(BaseModel):
     """Alice 三层记忆系统配置。
 
-    37 字段，扁平结构，Pydantic 校验。
+    39 字段，扁平结构，Pydantic 校验。
     """
 
     # ==========================================================================
@@ -42,16 +42,28 @@ class PluginConfig(BaseModel):
 
     l1_enabled: bool = Field(default=True, description="L1 存储开关")
     l1_retention_days: int = Field(
-        default=3,
+        default=7,
         ge=1,
         le=30,
         description="L1 磁盘保留天数，为 Path B 提供原料窗口",
+    )
+    l1_save_rounds: int = Field(
+        default=200,
+        ge=50,
+        le=500,
+        description="L1 磁盘保存轮数（1轮=user+assistant），压缩任务素材池",
+    )
+    l1_inject_rounds: int = Field(
+        default=80,
+        ge=0,
+        le=200,
+        description="L1 注入轮数。0=不注入 L1，仅用 L2+L3",
     )
     l1_search_limit: int = Field(
         default=10,
         ge=1,
         le=50,
-        description="注入上下文的 L1 对话最大条数",
+        description="注入上下文的 L1 对话最大条数（旧字段，保留兼容）",
     )
     store_media_content: bool = Field(
         default=True,
@@ -108,7 +120,7 @@ class PluginConfig(BaseModel):
         description="L2 日摘要保留天数",
     )
     l2_daily_inject_count: int = Field(
-        default=3,
+        default=7,
         ge=0,
         le=14,
         description="注入上下文的日摘要天数（最近 N 天）",
@@ -258,5 +270,7 @@ class PluginConfig(BaseModel):
         return self.model_dump(mode="json")
 
     def model_post_init(self, __context: Any) -> None:
-        """Pydantic 初始化后钩子：确保数据目录存在。"""
+        """Pydantic 初始化后钩子：确保数据目录存在 + 约束校验。"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        if self.l1_inject_rounds > self.l1_save_rounds:
+            self.l1_inject_rounds = self.l1_save_rounds
