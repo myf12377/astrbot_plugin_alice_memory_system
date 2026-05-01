@@ -32,10 +32,10 @@
 ```
 astrbot_alice_memory_modul/
 ├── main.py                        # ✅ Star 子类主入口（第5层）— C2 完成（4命令+silent+manage_context）
-├── _conf_schema.json              # ✅ 36键框架配置 schema
-├── metadata.yaml                  # ✅ v2.1.2
+├── _conf_schema.json              # ✅ 37键框架配置 schema
+├── metadata.yaml                  # ✅ v2.1.3
 ├── memory/
-│   ├── plugin_config.py           # ✅ PluginConfig 36字段 Pydantic 模型（第0层）
+│   ├── plugin_config.py           # ✅ PluginConfig 37字段 Pydantic 模型（第0层）
 │   ├── context_injector.py        # ✅ 上下文注入（第3层）— B2 完成
 │   ├── identity/                  # 跨平台身份 [稳定]
 │   ├── storage/                   # ✅ JSON 持久化（第1层）— A1 完成
@@ -246,6 +246,7 @@ logger.debug(f"[AliceMemory] 阶段 | 详细信息...")
 | 各 Layer 模块就绪 | INFO | `模块就绪 | Storage ✓ | VectorStore ✓ | ...` |
 | Scheduler 启动 | INFO | `定时任务注册 | tasks=6` |
 | on_llm_request 入口 | INFO | `on_llm_request | uid=xxx(8) | msg_len=N` |
+| manage_context 清空 | INFO | `已清空 AstrBot 对话历史` |
 | 每条管线注入 | DEBUG | `注入 L1: N条 → contexts` / `注入 L2 Path B: 最近N天` |
 | 注入完成 | INFO | `注入完成 | contexts+N | extra_parts+N` |
 | on_llm_response | DEBUG | `助手回复存储 | uid=xxx(8) | len=N` |
