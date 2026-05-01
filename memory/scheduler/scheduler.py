@@ -57,12 +57,12 @@ class Scheduler:
             return
 
         jobs = [
-            ("0 1 * * *",   self._safe_wrap(self._compress_daily),  "Path B 日压缩"),
-            ("0 2 * * *",   self._safe_wrap(self._l1_cleanup),      "L1 过期清理"),
-            ("0 3 * * *",   self._safe_wrap(self._l3_maintenance),  "L3 衰减+灰区重评"),
-            ("0 4 * * *",   self._safe_wrap(self._compress_context), "Path A 周压缩"),
-            ("0 5 * * 1",   self._safe_wrap(self._reset_weekly),    "周一重置周摘要"),
-            ("0 6 1 * *",   self._safe_wrap(self._l3_merge),        "L3 月度合并"),
+            ("0 1 * * *", self._safe_wrap(self._compress_daily), "Path B 日压缩"),
+            ("0 2 * * *", self._safe_wrap(self._l1_cleanup), "L1 过期清理"),
+            ("0 3 * * *", self._safe_wrap(self._l3_maintenance), "L3 衰减+灰区重评"),
+            ("0 4 * * *", self._safe_wrap(self._compress_context), "Path A 周压缩"),
+            ("0 5 * * 1", self._safe_wrap(self._reset_weekly), "周一重置周摘要"),
+            ("0 6 1 * *", self._safe_wrap(self._l3_merge), "L3 月度合并"),
         ]
         for i, (cron, handler, desc) in enumerate(jobs):
             await cron_manager.add_basic_job(
@@ -81,13 +81,11 @@ class Scheduler:
     # ==================================================================
 
     def _safe_wrap(self, coro_func):
-        """同步包装器：在事件循环中执行异步任务，捕获并记录异常。"""
-        import asyncio
+        """异步包装器：CronJobManager 的 _run_basic_job 会 await 协程结果。"""
 
-        def wrapper():
+        async def wrapper():
             try:
-                loop = asyncio.get_event_loop()
-                loop.create_task(coro_func())
+                await coro_func()
             except Exception:
                 logger.error("[AliceMemory] 定时任务调度失败", exc_info=True)
 
@@ -98,19 +96,27 @@ class Scheduler:
     # ==================================================================
 
     async def _compress_daily(self) -> None:
+        logger.info("[AliceMemory] 定时触发 | 01:00 Path B 日压缩")
         if not self._compressor or not self._config.l2_path_b_enabled:
             return
         try:
             from datetime import datetime, timedelta
+
             cst = ZoneInfo("Asia/Shanghai")
             yesterday = (datetime.now(cst) - timedelta(days=1)).strftime("%Y-%m-%d")
             for uid in self._identity_module.get_all_users():
                 try:
                     result = await self._compressor.compress_day(uid, yesterday)
                     if result:
-                        logger.info("[AliceMemory] Path B 压缩完成 | uid=%s... | date=%s", uid[:8], yesterday)
+                        logger.info(
+                            "[AliceMemory] Path B 压缩完成 | uid=%s... | date=%s",
+                            uid[:8],
+                            yesterday,
+                        )
                 except Exception as e:
-                    logger.error("[AliceMemory] Path B 压缩失败 | uid=%s | %s", uid[:8], e)
+                    logger.error(
+                        "[AliceMemory] Path B 压缩失败 | uid=%s | %s", uid[:8], e
+                    )
         except Exception:
             logger.error("[AliceMemory] Path B 日压缩异常", exc_info=True)
 
@@ -119,6 +125,7 @@ class Scheduler:
     # ==================================================================
 
     async def _l1_cleanup(self) -> None:
+        logger.info("[AliceMemory] 定时触发 | 02:00 L1 过期清理")
         if not self._config.l1_enabled:
             return
         try:
@@ -135,6 +142,7 @@ class Scheduler:
     # ==================================================================
 
     async def _l3_maintenance(self) -> None:
+        logger.info("[AliceMemory] 定时触发 | 03:00 L3 衰减+灰区重评")
         if not self._vector_store or not self._config.l3_enabled:
             return
         try:
@@ -143,7 +151,9 @@ class Scheduler:
                 if deleted or gray:
                     logger.info(
                         "[AliceMemory] L3 衰减 | uid=%s... | 删除=%d | 灰区=%d",
-                        uid[:8], deleted, gray,
+                        uid[:8],
+                        deleted,
+                        gray,
                     )
                 if gray and self._analyzer:
                     gray_memories = self._vector_store.get_gray_zone_memories(uid)
@@ -165,6 +175,7 @@ class Scheduler:
     # ==================================================================
 
     async def _compress_context(self) -> None:
+        logger.info("[AliceMemory] 定时触发 | 04:00 Path A 周压缩")
         if not self._compressor or not self._config.l2_path_a_enabled:
             return
         try:
@@ -172,13 +183,13 @@ class Scheduler:
                 try:
                     summary = await self._compressor.compress_context_summary(uid)
                     if summary:
-                        from datetime import datetime
-                        cst = ZoneInfo("Asia/Shanghai")
-                        week_start = datetime.now(cst).strftime("%Y-%m-%d")
-                        self._storage.set_weekly_summary(uid, summary, week_start)
-                        logger.info("[AliceMemory] Path A 压缩完成 | uid=%s... | week_start=%s", uid[:8], week_start)
+                        logger.info(
+                            "[AliceMemory] Path A 压缩完成 | uid=%s...", uid[:8]
+                        )
                 except Exception as e:
-                    logger.error("[AliceMemory] Path A 压缩失败 | uid=%s | %s", uid[:8], e)
+                    logger.error(
+                        "[AliceMemory] Path A 压缩失败 | uid=%s | %s", uid[:8], e
+                    )
         except Exception:
             logger.error("[AliceMemory] Path A 周压缩异常", exc_info=True)
 
@@ -187,6 +198,7 @@ class Scheduler:
     # ==================================================================
 
     async def _reset_weekly(self) -> None:
+        logger.info("[AliceMemory] 定时触发 | 周一 05:00 重置周摘要")
         try:
             count = 0
             for uid in self._identity_module.get_all_users():
@@ -203,6 +215,7 @@ class Scheduler:
 
     async def _l3_merge(self) -> None:
         """贪心法合并 L3 相似记忆。"""
+        logger.info("[AliceMemory] 定时触发 | 每月1日 06:00 L3 月度合并")
         if not self._vector_store or not self._analyzer or not self._config.l3_enabled:
             return
         threshold = self._config.l3_merge_similarity
@@ -223,22 +236,31 @@ class Scheduler:
                     if m1["id"] in consumed:
                         continue
                     similar = await self._vector_store.find_similar_by_content(
-                        uid, m1["content"], threshold,
+                        uid,
+                        m1["content"],
+                        threshold,
                     )
                     for s in similar:
                         if s["id"] in consumed or s["id"] == m1["id"]:
                             continue
                         merged = await self._analyzer.merge_content(
-                            m1["content"], s["content"],
+                            m1["content"],
+                            s["content"],
                         )
                         if not merged:
                             continue
-                        new_score = max(
-                            m1["metadata"].get("importance", 0),
-                            s["metadata"].get("importance", 0),
-                        ) + 0.5
+                        new_score = (
+                            max(
+                                m1["metadata"].get("importance", 0),
+                                s["metadata"].get("importance", 0),
+                            )
+                            + 0.5
+                        )
                         await self._vector_store.merge_memories(
-                            m1["id"], s["id"], merged, new_score,
+                            m1["id"],
+                            s["id"],
+                            merged,
+                            new_score,
                         )
                         consumed.add(m1["id"])
                         consumed.add(s["id"])
@@ -248,7 +270,8 @@ class Scheduler:
                 if merged_count:
                     logger.info(
                         "[AliceMemory] L3 合并 | uid=%s... | 合并=%d 对",
-                        uid[:8], merged_count,
+                        uid[:8],
+                        merged_count,
                     )
         except Exception:
             logger.error("[AliceMemory] L3 合并异常", exc_info=True)
