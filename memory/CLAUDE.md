@@ -10,7 +10,7 @@
 | [analyzer/](analyzer/) | ImportanceAnalyzer | 1 | ✅ 完成 |
 | [compressor/](compressor/) | DialogueCompressor | 2 | ✅ 完成 |
 | [migration/](migration/) | MigrationModule | 2 | ✅ 完成 |
-| context_injector.py | ContextInjector | 3 | ✅ 完成 |
+| context_injector.py | ContextInjector | 3 | ✅ v2.2.0 三管线注入（L1分组+L2合并+L3按需） |
 | [scheduler/](scheduler/) | Scheduler | 4 | ✅ 完成 |
 | plugin_config.py | PluginConfig | 0 | ✅ 完成（37字段） |
 | _conf_schema.json | 框架配置 schema | — | ✅ 完成 |

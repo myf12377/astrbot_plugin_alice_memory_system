@@ -2,7 +2,7 @@
 
 `astrbot_alice_memory_modul` — 三层记忆存储系统（L1原始对话 / L2双路中期记忆 / L3长期向量记忆）。
 
-> **v2.1.3** — 新增 `manage_context` 配置项，插件可全权管理上下文，清空 AstrBot 对话历史。
+> **v2.2.0** — 注入系统重设计：L1 全量分组注入（80轮）、L2 去重合并、日期边界标注。
 
 ## AI 行为规则
 
@@ -32,11 +32,11 @@
 ```
 astrbot_alice_memory_modul/
 ├── main.py                        # ✅ Star 子类主入口（第5层）— C2 完成（4命令+silent+manage_context）
-├── _conf_schema.json              # ✅ 37键框架配置 schema
-├── metadata.yaml                  # ✅ v2.1.3
+├── _conf_schema.json              # ✅ 39键框架配置 schema
+├── metadata.yaml                  # ✅ v2.2.0
 ├── memory/
-│   ├── plugin_config.py           # ✅ PluginConfig 37字段 Pydantic 模型（第0层）
-│   ├── context_injector.py        # ✅ 上下文注入（第3层）— B2 完成
+│   ├── plugin_config.py           # ✅ PluginConfig 39字段 Pydantic 模型（第0层）
+│   ├── context_injector.py        # ✅ 三管线注入（第3层）— L1分组+L2合并+L3按需
 │   ├── identity/                  # 跨平台身份 [稳定]
 │   ├── storage/                   # ✅ JSON 持久化（第1层）— A1 完成
 │   ├── vector_store/              # ✅ ChromaDB 向量（第1层）— A2 完成
@@ -69,7 +69,7 @@ PluginConfig (0) → Identity(1) / Storage(1) / VectorStore(1) / Analyzer(1)
 | 用户消息注入 | Main.on_llm_request | Identity→Storage(写L1)→[清空contexts]→Injector(读全部→注入req) |
 | 判断晋升L3 | Main.on_llm_request | Analyzer.analyze→VectorStore.add→find_similar→merge |
 | 01:00 Path B | Scheduler | Storage(L1)→Compressor(LLM)→Storage(写L2) |
-| 02:00 L1清理 | Scheduler | Storage.delete_old_l1_dialogues |
+| 02:00 L1裁剪 | Scheduler | Storage.trim_to_recent_rounds(l1_save_rounds) |
 | 03:00 L3衰减 | Scheduler | VectorStore.apply_decay→get_gray→Analyzer.batch_recheck |
 | 04:00 Path A | Scheduler | Storage(L1+L2+周)→Compressor(LLM)→Storage(覆写周) |
 | 周一05:00 | Scheduler | Storage.clear_weekly_summary |
@@ -79,10 +79,9 @@ PluginConfig (0) → Identity(1) / Storage(1) / VectorStore(1) / Analyzer(1)
 | 导出/导入 | Main命令 | MigrationModule |
 
 上下文字段注入位置：
-- L1 → `request.contexts`（无标记，自然消失）
-- L2 Path A → `extra_user_content_parts`（标记 `[周摘要]`，覆盖式）
-- L2 Path B → `extra_user_content_parts`（标记 `[L2记忆]`，覆盖式）
-- L3 → `extra_user_content_parts`（标记 `[L3记忆]`，覆盖式）
+- L1 → `request.contexts`（按日期分组，system 标记日期边界）
+- L2 → `extra_user_content_parts`（标记 `[L2记忆]`，周摘要+非本周日摘要去重合并）
+- L3 → `extra_user_content_parts`（标记 `[L3记忆]`，按需语义检索）
 
 ## 钩子系统
 
@@ -195,30 +194,16 @@ async def cmd_show(self, event: AstrMessageEvent, query: str):
 
 ### 注入管线开关
 
-每条管线由 config 独立控制，ContextInjector 内部判断：
+三管线由 config 控制，ContextInjector.inject_all() 内部调度（顺序：L2→L3→L1）：
 
 ```python
-# Main.on_llm_request 中：
-user_id = self._identity.get_user_id(platform, platform_user_id)
-if not user_id:
-    return
-
-# 存储（不受注入开关影响）
-self._storage.append_dialogue(user_id, role, content)
-
-# 清空 AstrBot 对话历史（manage_context 模式）
-if self.plugin_config.manage_context:
-    req.contexts = []
-
-# 注入（按管线开关独立控制）
-if self.plugin_config.inject_l1:
-    await self._injector.inject_l1(user_id, req)
-if self.plugin_config.inject_l2_path_b:
-    await self._injector.inject_l2_path_b(user_id, req)
-if self.plugin_config.inject_l2_path_a:
-    await self._injector.inject_l2_path_a(user_id, req)
-if self.plugin_config.inject_l3:
-    await self._injector.inject_l3(user_id, req)
+# ContextInjector.inject_all() 内部：
+if self._config.inject_l2_path_a or self._config.inject_l2_path_b:
+    await self.inject_l2_merged(user_id, request)
+if self._config.inject_l3:
+    await self.inject_l3(user_id, request)
+if self._config.inject_l1:
+    await self.inject_l1(user_id, request)
 ```
 
 ## 调试日志
@@ -248,7 +233,7 @@ logger.debug(f"[AliceMemory] 阶段 | 详细信息...")
 | on_llm_request 入口 | INFO | `on_llm_request | uid=xxx(8) | msg_len=N` |
 | manage_context 清空 | INFO | `已清空 AstrBot 对话历史` |
 | 每条管线注入 | DEBUG | `注入 L1: N条 → contexts` / `注入 L2 Path B: 最近N天` |
-| 注入完成 | INFO | `注入完成 | contexts+N | extra_parts+N` |
+| 注入完成 | INFO | `注入完成 | L1=N条 | extra_parts=N` |
 | on_llm_response | DEBUG | `助手回复存储 | uid=xxx(8) | len=N` |
 | L3 晋升判断 | DEBUG | `重要性评分 | score=N | threshold=N | promote=True/False` |
 | 钩子异常 | ERROR | `钩子异常 | on_llm_request | {e}` + exc_info=True |
@@ -257,7 +242,7 @@ logger.debug(f"[AliceMemory] 阶段 | 详细信息...")
 
 ## 配置速查
 
-完整字段定义见 `memory/plugin_config.py` 的 `PluginConfig` 类（37字段，Pydantic BaseModel）。
+完整字段定义见 `memory/plugin_config.py` 的 `PluginConfig` 类（39字段，Pydantic BaseModel）。
 框架配置见 `_conf_schema.json`。
 工厂方法：`PluginConfig.defaults()` / `PluginConfig.from_framework_config(dict)`。
 

@@ -1,10 +1,10 @@
-# AstrBot Alice Memory Plugin v2.1.3
+# AstrBot Alice Memory Plugin v2.2.0
 
 AstrBot 三层记忆插件 — 让 AI 拥有类人记忆：短期对话、中期概括、长期沉淀。
 
 ## 概述
 
-- **L1 短期记忆**：当日对话完整保留，磁盘保留 3 天
+- **L1 短期记忆**：最近 N 轮全量注入（按日期分组），磁盘保存 200 轮
 - **L2 中期概括**：每日摘要 + 渐进周摘要，双路径自动压缩
 - **L3 长期沉淀**：重要记忆向量存储，艾宾浩斯衰减模型自然遗忘
 - **静默运行**：压缩后台自动执行，用户无感知
@@ -26,9 +26,8 @@ pip install chromadb
 
 | 层级 | 类型 | 生命周期 | 说明 |
 |------|------|---------|------|
-| **L1** | 原始对话 | 当日注入 / 磁盘 3 天 | 日内短期记忆，每日凌晨清理 |
-| **L2-A** | 渐进周摘要 | 一周，周一重置 | 上下文渐进压缩，覆盖式注入 |
-| **L2-B** | 每日磁盘摘要 | 7 天 TTL | 独立日摘要，注入最近 N 天 |
+| **L1** | 原始对话 | 最近 80 轮注入 / 磁盘 200 轮 | 按日期分组全量注入，轮次裁剪 |
+| **L2** | 周摘要 + 日摘要 | 周摘要一周 / 日摘要 7 天 TTL | 去重合并注入（周摘要+非本周日摘要） |
 | **L3** | 长期向量记忆 | 衰减模型 | 重要性评估 → 向量存储 → 语义检索 → 自然遗忘 |
 
 ### 记忆流转
@@ -36,7 +35,8 @@ pip install chromadb
 ```
 用户对话
    ↓
-L1 存储（原始对话，3天）
+L1 存储（原始对话，200轮）
+   ├─→ 全量注入（最近80轮，按日期分组）→ LLM 上下文
    ├─→ Path B 日压缩（凌晨 1:00）→ L2 日摘要（7天TTL）
    ├─→ Path A 上下文压缩（凌晨 4:00）→ 渐进周摘要（周一重置）
    └─→ 重要性分析 → L3 向量存储（衰减+合并+灰区重评）
@@ -64,10 +64,9 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 
 | 管线 | 注入位置 | 标记 |
 |------|---------|------|
-| L1 | `contexts` | 无标记（自然滚动） |
-| L2-A | `extra_user_content_parts` | `[周摘要]`（覆盖式） |
-| L2-B | `extra_user_content_parts` | `[L2记忆]`（覆盖式） |
-| L3 | `extra_user_content_parts` | `[L3记忆]`（覆盖式） |
+| L1 | `contexts` | system 日期标记 `[YYYY-MM-DD 对话]` |
+| L2 | `extra_user_content_parts` | `[L2记忆]`（周摘要+非本周日摘要，去重合并） |
+| L3 | `extra_user_content_parts` | `[L3记忆]`（按需语义检索） |
 
 ## 配置
 
@@ -76,7 +75,7 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 | 分类 | 关键配置项 |
 |------|-----------|
 | 通用 | `data_dir`、`log_level`、`hook_enabled` |
-| L1 | `l1_enabled`、`l1_retention_days`(3)、`l1_search_limit`(10) |
+| L1 | `l1_enabled`、`l1_save_rounds`(200)、`l1_inject_rounds`(80)、`l1_retention_days`(7) |
 | L2 | `l2_enabled`、Path A/B 独立开关、`l2_ttl`(7)、`l2_daily_inject_count`(3) |
 | L3 | `l3_enabled`、`importance_threshold`(8)、`l3_decay_rate`(0.995)、`l3_delete_threshold`(3.0) |
 | LLM | `compress_model`、`importance_analyze_model`、`llm_max_tokens`(1024)、`llm_temperature`(0.7) |
@@ -111,7 +110,7 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 | 时间 | 任务 |
 |------|------|
 | 01:00 | Path B 日压缩：L1 昨日对话 → L2 日摘要 |
-| 02:00 | L1 清理：删除过期原始对话 |
+| 02:00 | L1 裁剪：保留最近 200 轮，删除超出部分 |
 | 03:00 | L3 维护：衰减计算 + 灰区重评 + 低分删除 |
 | 04:00 | Path A 周压缩：合并生成渐进周摘要 |
 | 周一 05:00 | 周摘要重置 |
@@ -146,13 +145,30 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 
 - Python 3.10+
 - `ruff check --isolated .` / `ruff format --isolated .`
-- `pytest` — 103 项测试
+- `pytest` — 104 项测试
 
 ## 许可证
 
 MIT
 
 ## 更新日志
+
+### v2.2.0（2026-05-01）
+
+**新增：**
+- L1 保存与注入轮数解耦：`l1_save_rounds=200`（磁盘）+ `l1_inject_rounds=80`（注入），均前端可调
+- L1 全量分组注入：按日期分组，每天插入 system 日期标记，替代旧的滑动窗口
+- L2 去重合并注入：周摘要 + 非本周日摘要合并为单条 `[L2记忆]`，消除冗余
+- 注入管线从 4 条简化为 3 条（L1/L2 合并/L3）
+- `l1_retention_days` 默认值 3→7，`l2_daily_inject_count` 默认值 3→7
+
+**重构：**
+- `ContextInjector`：`inject_l2_path_a` + `inject_l2_path_b` → `inject_l2_merged`
+- `MemoryStorage`：新增 `get_recent_rounds()` + `trim_to_recent_rounds()`
+- `Scheduler`：L1 清理从"按天删除"改为"保留最近 N 轮"
+
+**测试：**
+- 重写注入器测试，新增 L2 合并/日期排除/隐藏项测试，总测试数 104
 
 ### v2.1.3（2026-05-01）
 
