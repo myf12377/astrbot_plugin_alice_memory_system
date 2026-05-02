@@ -1,7 +1,7 @@
 name: astrbot_alice_memory_modul
 display_name: Alice Memory
 desc: |
-  Alice 三层记忆系统 - 基于 LLM 的智能记忆管理插件 (v2.2.0)
+  Alice 三层记忆系统 - 基于 LLM 的智能记忆管理插件 (v2.2.1)
 
   记忆层次:
   - L1 原始对话: 最近 N 轮全量注入（按日期分组），磁盘保存 200 轮
@@ -14,7 +14,7 @@ desc: |
   - 手动压缩: /compact 命令支持 Path A/B 压缩
   - 数据迁移: 支持 .astrmem 和 ChromaDB 导出/导入
 author: Alice
-version: 2.2.0
+version: 2.2.1
 astrbot_version: ">=4.16"
 support_platforms:
   - qq_official

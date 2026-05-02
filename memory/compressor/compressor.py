@@ -210,10 +210,10 @@ class DialogueCompressor:
             f"摘要：{summary}\n\n"
             "请只输出一个0-10的数字分数，不要有其他文字。"
         )
-        response = await self._call_llm(prompt, umo)
+        response = await self._call_llm(prompt, umo, raw=True)
         return self._parse_score(response)
 
-    async def _call_llm(self, prompt: str, umo: str = "") -> str:
+    async def _call_llm(self, prompt: str, umo: str = "", raw: bool = False) -> str:
         kwargs: dict[str, Any] = {
             "max_tokens": self._config.llm_max_tokens,
             "temperature": self._config.llm_temperature,
@@ -234,9 +234,20 @@ class DialogueCompressor:
                     kwargs["chat_provider_id"] = prov.meta().id
             except Exception:
                 pass
-        resp = await self._context.llm_generate(prompt=prompt, **kwargs)
+        try:
+            resp = await self._context.llm_generate(prompt=prompt, **kwargs)
+        except Exception as e:
+            if "model" in kwargs:
+                logger.warning(
+                    f"[AliceMemory] 模型 {kwargs['model']} 调用失败，"
+                    f"降级使用 provider 默认模型 | {e}"
+                )
+                del kwargs["model"]
+                resp = await self._context.llm_generate(prompt=prompt, **kwargs)
+            else:
+                raise
         text = getattr(resp, "completion_text", "") or ""
-        if not self._looks_valid(text.strip()):
+        if not raw and not self._looks_valid(text.strip()):
             logger.warning(
                 "[AliceMemory] Compressor LLM 返回异常内容 | resp=%s...", text[:60]
             )

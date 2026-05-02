@@ -239,6 +239,7 @@ logger.debug(f"[AliceMemory] 阶段 | 详细信息...")
 | 钩子异常 | ERROR | `钩子异常 | on_llm_request | {e}` + exc_info=True |
 | Scheduler 任务执行 | INFO | `定时任务 | 01:00 Path B | uid=N users` |
 | Scheduler 任务异常 | ERROR | `定时任务失败 | Path B | {e}` + exc_info=True |
+| Compressor LLM 降级 | WARNING | `模型 xxx 调用失败，降级使用 provider 默认模型` |
 
 ## 配置速查
 

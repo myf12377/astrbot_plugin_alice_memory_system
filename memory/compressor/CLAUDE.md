@@ -24,6 +24,8 @@ async def compress_day(self, user_id: str, date: str, hidden: bool = False, umo:
 
 内部：`_generate_summary(content, path)` 按 path="a"/"b" 选用 `l2_compress_prompt_a`/`l2_compress_prompt_b` 模板调 LLM。
 
+`_call_llm(prompt, umo, raw=False)`：LLM 调用核心。`raw=True` 跳过 `_looks_valid` 校验（用于重要性评分等短返回场景）。model 不兼容时自动降级去掉 `model` 参数重试。
+
 ## 边界
 
 不负责：数据读写（从参数接收，结果返回）、调度决策。

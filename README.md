@@ -153,6 +153,12 @@ MIT
 
 ## 更新日志
 
+### v2.2.1（2026-05-02）
+
+**修复：**
+- Compressor `_call_llm` 增加 model 不兼容自动降级：当 `compress_model` 指定的模型与当前 provider 不匹配时（定时任务场景），自动去掉 `model` 参数重试，修复 04:00 Path A 定时任务 `unknown model` 失败
+- `_estimate_importance` 使用 `raw=True` 跳过 `_looks_valid` 校验，修复重要性评分（如 `"7"`）因长度不足被误拦截回退到默认分 5
+
 ### v2.2.0（2026-05-01）
 
 **新增：**
