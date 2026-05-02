@@ -43,6 +43,8 @@ class TestScheduler:
         context = MagicMock()
         context.cron_manager = MagicMock()
         context.cron_manager.add_basic_job = AsyncMock()
+        context.cron_manager.list_jobs = AsyncMock(return_value=[])
+        context.cron_manager.delete_job = AsyncMock()
         return context
 
     @pytest.fixture

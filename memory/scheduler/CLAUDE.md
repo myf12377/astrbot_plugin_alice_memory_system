@@ -20,7 +20,8 @@ def __init__(
 
 ```python
 async def start(self) -> None: ...
-"""向 AstrBot CronJobManager 注册 6 个定时任务。无 cron_manager 时静默返回。"""
+"""向 AstrBot CronJobManager 注册 6 个定时任务。无 cron_manager 时静默返回。
+注册前先清理同名旧任务，防止重启累积重复。"""
 ```
 
 6 个任务入口（均为 async，遍历全部用户执行）：

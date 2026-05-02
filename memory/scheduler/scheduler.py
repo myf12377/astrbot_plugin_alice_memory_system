@@ -56,6 +56,12 @@ class Scheduler:
             logger.warning("[AliceMemory] CronManager 不可用，跳过定时任务注册")
             return
 
+        # 清理旧任务，防止重启累积重复
+        existing = await cron_manager.list_jobs()
+        for job in existing:
+            if job.name.startswith("AliceMemory_"):
+                await cron_manager.delete_job(job.job_id)
+
         jobs = [
             ("0 1 * * *", self._safe_wrap(self._compress_daily), "Path B 日压缩"),
             ("0 2 * * *", self._safe_wrap(self._l1_cleanup), "L1 轮次裁剪"),
