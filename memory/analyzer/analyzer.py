@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+from astrbot.api import logger
+
 if TYPE_CHECKING:
     from memory.plugin_config import PluginConfig
 
@@ -120,7 +122,18 @@ class ImportanceAnalyzer:
                     kwargs["chat_provider_id"] = prov.meta().id
             except Exception:
                 pass
-        resp = await self._context.llm_generate(prompt=prompt, **kwargs)
+        try:
+            resp = await self._context.llm_generate(prompt=prompt, **kwargs)
+        except Exception as e:
+            if "model" in kwargs:
+                logger.warning(
+                    f"[AliceMemory] 模型 {kwargs['model']} 调用失败，"
+                    f"降级使用 provider 默认模型 | {e}"
+                )
+                del kwargs["model"]
+                resp = await self._context.llm_generate(prompt=prompt, **kwargs)
+            else:
+                raise
         return getattr(resp, "completion_text", "") or ""
 
     # ==================================================================

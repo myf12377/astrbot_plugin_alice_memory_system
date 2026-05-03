@@ -14,7 +14,7 @@ desc: |
   - 手动压缩: /compact 命令支持 Path A/B 压缩
   - L2 日摘要自动清理: 02:00 定时清理 7 天前日摘要
 author: Alice
-version: 2.3.0
+version: 2.3.1
 astrbot_version: ">=4.16"
 support_platforms:
   - qq_official

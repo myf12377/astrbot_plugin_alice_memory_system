@@ -29,6 +29,8 @@ async def merge_content(self, c1: str, c2: str, umo: str = "") -> str: ...
 
 内部：`_build_prompt`, `_build_batch_prompt`, `_build_merge_prompt`, `_parse_score`。
 
+`_call_llm(prompt, umo)`：LLM 调用核心。model 不兼容时自动降级去掉 `model` 参数重试。
+
 ## 边界
 
 不负责：记忆 CRUD（由调用方执行）、压缩、定时调度。

@@ -151,6 +151,11 @@ MIT
 
 ## 更新日志
 
+### v2.3.1（2026-05-03）
+
+**修复：**
+- Analyzer `_call_llm` 增加 model 不兼容自动降级：与 Compressor 同步防护，catch model 400 后去掉 model 重试
+
 ### v2.3.0（2026-05-02）
 
 **清理：**
