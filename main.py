@@ -79,6 +79,40 @@ class AliceMemoryPlugin(Star):
         logger.info("[AliceMemory] 定时调度就绪 | Scheduler ✓")
 
     # =========================================================================
+    # 公开接口 — 供主动层/中间层调用
+    # =========================================================================
+
+    @property
+    def storage(self) -> MemoryStorage:
+        """公开存储模块，供主动层/中间层调用。"""
+        return self._storage
+
+    @property
+    def vector_store(self) -> VectorStore:
+        """公开向量存储模块。"""
+        return self._vector_store
+
+    @property
+    def identity(self) -> IdentityModule:
+        """公开身份模块。"""
+        return self._identity
+
+    @property
+    def injector(self) -> ContextInjector:
+        """公开上下文注入器。"""
+        return self._injector
+
+    @property
+    def compressor(self) -> DialogueCompressor:
+        """公开压缩器模块。"""
+        return self._compressor
+
+    @property
+    def analyzer(self) -> ImportanceAnalyzer:
+        """公开分析器模块。"""
+        return self._analyzer
+
+    # =========================================================================
     # LLM 钩子
     # =========================================================================
 

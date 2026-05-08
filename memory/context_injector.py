@@ -192,3 +192,112 @@ class ContextInjector:
             for p in request.extra_user_content_parts
             if not getattr(p, "text", "").startswith(marker)
         ]
+
+    # ==================================================================
+    # 纯读取方法 — 供主动层/中间层调用（不操作 req）
+    # ==================================================================
+
+    def get_l1_context(self, user_id: str, limit: int | None = None) -> str | None:
+        """读取 L1 日内对话，返回格式化文本。
+
+        返回格式:
+            [L1记忆]
+            用户: ...
+            助手: ...
+        """
+        rounds = self._storage.get_recent_rounds(user_id)
+        if not rounds:
+            return None
+
+        if limit is not None:
+            rounds = rounds[-limit:]
+
+        lines = ["[L1记忆]"]
+        for msg in rounds:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            role_label = "用户" if role == "user" else "助手"
+            lines.append(f"{role_label}: {content}")
+
+        return "\n".join(lines)
+
+    def get_l2_path_a_context(self, user_id: str) -> str | None:
+        """读取 Path A 渐进周摘要，返回格式化文本。
+
+        返回格式:
+            [L2周摘要]
+            <summary>
+        """
+        weekly = self._storage.get_weekly_summary(user_id)
+        if not weekly or not weekly.get("summary"):
+            return None
+
+        return f"[L2周摘要]\n{weekly['summary']}"
+
+    def get_l2_path_b_context(
+        self, user_id: str, days: int | None = None
+    ) -> str | None:
+        """读取 Path B 近 N 天日摘要，返回格式化文本。
+
+        返回格式:
+            [L2日摘要]
+            [2026-05-07] <summary>
+            [2026-05-06] <summary>
+        """
+        limit = days if days is not None else self._config.l2_daily_inject_count
+        summaries = self._storage.get_daily_summaries(user_id, last=limit)
+        if not summaries:
+            return None
+
+        week_start = self._get_week_start()
+        parts: list[str] = []
+        for s in summaries:
+            if s.hidden:
+                continue
+            if s.date >= week_start:
+                continue  # 本周的跳过（周摘要覆盖）
+            parts.append(f"[{s.date}] {s.summary}")
+
+        if not parts:
+            return None
+
+        return "[L2日摘要]\n" + "\n".join(parts)
+
+    async def get_l3_context(
+        self, user_id: str, query: str = "", top_k: int | None = None
+    ) -> str | None:
+        """读取 L3 相关向量记忆，返回格式化文本。
+
+        Args:
+            query: 搜索查询。空字符串时检索最近记忆。
+            top_k: 返回条数，默认使用配置值。
+
+        返回格式:
+            [L3记忆]
+            1. <content>
+            2. <content>
+        """
+        if not self._vector_store:
+            return None
+
+        k = top_k if top_k is not None else getattr(self._config, "l3_merge_similarity", 3)
+        query = query.strip() if query else ""
+
+        results = await self._vector_store.search(user_id, query, top_k=min(k, 5))
+        if not results:
+            return None
+
+        threshold = self._config.l3_merge_similarity
+        items: list[str] = []
+        for i, r in enumerate(results, 1):
+            score = r.get("distance", 0)
+            similarity = 1.0 - score
+            if similarity >= threshold:
+                content = r.get("content", "")
+                if content:
+                    items.append(f"{i}. {content}")
+
+        if not items:
+            return None
+
+        return "[L3记忆]\n" + "\n".join(items)

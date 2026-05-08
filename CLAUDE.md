@@ -2,7 +2,7 @@
 
 `astrbot_alice_memory_modul` — 三层记忆存储系统（L1原始对话 / L2双路中期记忆 / L3长期向量记忆）。
 
-> **v2.2.0** — 注入系统重设计：L1 全量分组注入（80轮）、L2 去重合并、日期边界标注。
+> **v2.3.2** — 为主动层联动增加公开 property + 纯读取方法。
 
 ## AI 行为规则
 
@@ -118,6 +118,34 @@ class AliceMemoryPlugin(Star):
         """框架在 __init__ 后自动调用 — 注册定时任务。"""
         await self._scheduler.start()
 ```
+
+### 公开接口 — 供主动层/中间层调用
+
+以下 property 暴露内部模块的只读引用，供外部插件（主动层、中间层）调用。调用方式：
+
+```python
+memory_plugin = context.get_all_stars()  # 获取 AliceMemoryPlugin 实例
+storage = memory_plugin.storage           # MemoryStorage
+injector = memory_plugin.injector         # ContextInjector
+```
+
+| Property | 类型 | 说明 |
+|----------|------|------|
+| `storage` | `MemoryStorage` | L1/L2 读写 |
+| `vector_store` | `VectorStore` | L3 向量存储 |
+| `identity` | `IdentityModule` | 跨平台身份映射 |
+| `injector` | `ContextInjector` | 上下文注入（含纯读取方法） |
+| `compressor` | `DialogueCompressor` | 对话压缩 |
+| `analyzer` | `ImportanceAnalyzer` | 重要性评分 |
+
+ContextInjector 新增 4 个纯读取方法（不操作 req，返回格式化文本）：
+
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `get_l1_context(user_id)` | `str \| None` | L1 日内对话 |
+| `get_l2_path_a_context(user_id)` | `str \| None` | Path A 周摘要 |
+| `get_l2_path_b_context(user_id)` | `str \| None` | Path B 日摘要 |
+| `get_l3_context(user_id, query)` | `awaitable str \| None` | L3 语义检索 |
 
 ### 钩子注册
 

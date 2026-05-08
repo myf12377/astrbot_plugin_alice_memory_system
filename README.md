@@ -1,4 +1,4 @@
-# AstrBot Alice Memory Plugin v2.3.0
+# AstrBot Alice Memory Plugin v2.3.2
 
 AstrBot 三层记忆插件 — 让 AI 拥有类人记忆：短期对话、中期概括、长期沉淀。
 
@@ -150,6 +150,12 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 MIT
 
 ## 更新日志
+
+### v2.3.2（2026-05-08）
+
+**新增：**
+- AliceMemoryPlugin 增加 6 个公开 property（storage / vector_store / identity / injector / compressor / analyzer），供主动层/中间层联动调用
+- ContextInjector 增加 4 个纯读取方法（get_l1_context / get_l2_path_a_context / get_l2_path_b_context / get_l3_context），返回格式化文本而不操作 req
 
 ### v2.3.1（2026-05-03）
 
