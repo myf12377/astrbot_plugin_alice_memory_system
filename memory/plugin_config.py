@@ -24,7 +24,7 @@ class PluginConfig(BaseModel):
     # ==========================================================================
 
     data_dir: Path = Field(
-        default=Path("data/plugin_data/astrbot_alice_memory_modul"),
+        default=Path("data/plugin_data/astrbot_alice_memory_tier"),
         description="插件数据存储根目录",
     )
     log_level: str = Field(

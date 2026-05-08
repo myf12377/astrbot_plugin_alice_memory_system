@@ -1,4 +1,4 @@
-name: astrbot_alice_memory_modul
+name: astrbot_alice_memory_tier
 display_name: Alice Memory
 desc: |
   Alice 三层记忆系统 - 基于 LLM 的智能记忆管理插件 (v2.2.1)

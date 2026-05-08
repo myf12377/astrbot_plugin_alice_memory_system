@@ -1,6 +1,6 @@
 # AstrBot Alice Memory Plugin
 
-`astrbot_alice_memory_modul` — 三层记忆存储系统（L1原始对话 / L2双路中期记忆 / L3长期向量记忆）。
+`astrbot_alice_memory_tier` — 三层记忆存储系统（L1原始对话 / L2双路中期记忆 / L3长期向量记忆）。
 
 > **v2.3.2** — 为主动层联动增加公开 property + 纯读取方法。
 
@@ -20,17 +20,17 @@
 
 | 项目 | 路径 |
 |------|------|
-| 插件源码 | `C:\Users\lenovo\Projects\astrbot_alice_memory_modul\` |
+| 插件源码 | `C:\Users\lenovo\Projects\astrbot_alice_memory_tier\` |
 | AstrBot 源码 | `C:\Users\lenovo\Projects\test\astrbot\` |
-| 插件部署位置 | `test/astrbot/data/plugins/astrbot_alice_memory_modul/` |
-| 插件数据目录 | `test/astrbot/data/plugin_data/astrbot_alice_memory_modul/` |
+| 插件部署位置 | `test/astrbot/data/plugins/astrbot_alice_memory_tier/` |
+| 插件数据目录 | `test/astrbot/data/plugin_data/astrbot_alice_memory_tier/` |
 
 **部署工作流**：源码目录编辑 → Git commit → 复制到部署位置 → AstrBot 集成测试。只改源码，不改副本。
 
 ## 项目结构
 
 ```
-astrbot_alice_memory_modul/
+astrbot_alice_memory_tier/
 ├── main.py                        # ✅ Star 子类主入口（第5层）— C2 完成（4命令+silent+manage_context）
 ├── _conf_schema.json              # ✅ 39键框架配置 schema
 ├── metadata.yaml                  # ✅ v2.3.0

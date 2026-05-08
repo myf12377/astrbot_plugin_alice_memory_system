@@ -2,7 +2,7 @@
   "data_dir": {
     "type": "string",
     "description": "插件数据存储根目录",
-    "default": "data/plugin_data/astrbot_alice_memory_modul",
+    "default": "data/plugin_data/astrbot_alice_memory_tier",
     "hint": "相对或绝对路径。数据将按 L1/L2/L3 子目录组织。"
   },
   "hook_enabled": {

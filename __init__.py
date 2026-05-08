@@ -1,5 +1,5 @@
 """
-astrbot_alice_memory_modul — Alice 三层记忆系统插件
+astrbot_alice_memory_tier — Alice 三层记忆系统插件
 提供 L1/L2/L3 三层记忆存储功能，支持 ChromaDB 向量检索与 LLM 压缩/分析。
 """
 

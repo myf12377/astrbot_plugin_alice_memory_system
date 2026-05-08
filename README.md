@@ -18,7 +18,7 @@ pip install chromadb
 ```
 
 将插件文件夹复制到 AstrBot 插件目录：
-`<ASTRBOT_ROOT>/data/plugins/astrbot_alice_memory_modul/`
+`<ASTRBOT_ROOT>/data/plugins/astrbot_alice_memory_tier/`
 
 重启 AstrBot，插件自动加载。正常对话即可积累记忆。发送 `/compact` 手动压缩，或等待凌晨定时任务。
 
@@ -118,7 +118,7 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 
 ## 数据管理
 
-插件数据存储在 `data/plugin_data/astrbot_alice_memory_modul/`：
+插件数据存储在 `data/plugin_data/astrbot_alice_memory_tier/`：
 
 ```
 ├── identity_map.json     # 跨平台用户身份映射
@@ -133,7 +133,7 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 
 将记忆从一台设备转移到另一台：
 
-1. **源设备**：关闭 AstrBot → 复制 `data/plugin_data/astrbot_alice_memory_modul/` 整个目录
+1. **源设备**：关闭 AstrBot → 复制 `data/plugin_data/astrbot_alice_memory_tier/` 整个目录
 2. **目标设备**：部署插件后 `首次启动前`，将复制的目录粘贴到相同位置
 3. **启动** AstrBot → 所有 L1/L2/L3 记忆、用户身份、向量库自动恢复
 
