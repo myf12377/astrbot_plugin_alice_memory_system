@@ -123,14 +123,19 @@ class VectorStore:
     async def _call_embedding_func_async(
         self, texts: list[str],
     ) -> list[list[float]]:
-        """调用 embedding 函数（兼容同步/异步）。"""
+        """调用 embedding 函数（兼容同步/异步/类实例 __call__）。"""
         if self._embedding_func is None:
             return []
         import inspect
-        if inspect.iscoroutinefunction(self._embedding_func):
-            return await self._embedding_func(texts)
+        func = self._embedding_func
+        # 检查是否为 async def 函数，或者有 async __call__ 的类实例（如 EmbeddingResolver）
+        if (
+            inspect.iscoroutinefunction(func)
+            or inspect.iscoroutinefunction(getattr(func, "__call__", None))
+        ):
+            return await func(texts)
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._embedding_func, texts)
+        return await loop.run_in_executor(None, func, texts)
 
     @staticmethod
     def _now_iso() -> str:
