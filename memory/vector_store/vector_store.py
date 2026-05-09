@@ -43,7 +43,10 @@ class VectorStore:
         """
         self._config = config
         self._embedding_func = embedding_func
-        self._collection_name = "astrmemory_l3"
+        # 外部 provider 用独立 collection（避免维度锁定冲突）
+        self._collection_name = (
+            "astrmemory_l3_ext" if embedding_func is not None else "astrmemory_l3"
+        )
         self._client: Any = None
         self._collection: Any = None
         self._init_client(data_dir)
@@ -59,28 +62,25 @@ class VectorStore:
             name=self._collection_name,
             metadata={"description": "AstrBot L3 memory storage"},
         )
-        # Provider 切换时，同步重建 collection + 异步重嵌入
-        if self._embedding_func is not None and self._collection.count() > 0:
+        # Provider 切换时，从旧 collection 迁移数据到新 collection
+        if self._embedding_func is not None and self._collection.count() == 0:
             try:
-                # 读取全部旧数据（在删 collection 之前）
-                old_data = self._collection.get(
+                old_collection = self._client.get_collection(
+                    name="astrmemory_l3",
+                )
+                old_data = old_collection.get(
                     include=["documents", "metadatas"],
                 )
                 if old_data["ids"]:
                     logger.info(
-                        "[AliceMemory] 切换 EmbeddingProvider | 重建 L3 collection..."
+                        "[AliceMemory] 迁移 L3 数据 | chroma → external provider..."
                     )
-                    # 删旧 collection（锁定了旧维度）→ 建新 collection（无维度锁定）
-                    self._client.delete_collection(self._collection_name)
-                    self._collection = self._client.create_collection(
-                        name=self._collection_name,
-                        metadata={"description": "AstrBot L3 memory storage"},
-                    )
-                    # 异步重嵌入（用新 provider 重算向量写回）
                     loop = asyncio.get_event_loop()
                     loop.create_task(self._reindex_async(old_data))
-            except RuntimeError:
-                pass
+                    # 删除旧 collection（不再需要）
+                    self._client.delete_collection("astrmemory_l3")
+            except Exception:
+                pass  # 旧 collection 不存在或为空，正常
 
     # ------------------------------------------------------------------
     # embedding 工具
