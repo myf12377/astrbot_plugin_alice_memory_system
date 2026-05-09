@@ -80,6 +80,13 @@ class ContextInjector:
         if not rounds:
             return
 
+        # 去掉最后一条 user 消息（会通过 req.prompt 传入，避免重复）
+        if rounds and rounds[-1].get("role") == "user":
+            rounds.pop()
+            # 连带清理尾部残留的 system 日期标记
+            if rounds and rounds[-1].get("role") == "system":
+                rounds.pop()
+
         for msg in rounds:
             request.contexts.append(msg)
 

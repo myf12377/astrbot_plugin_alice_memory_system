@@ -165,7 +165,7 @@ class TestContextInjector:
         ]
         req = self.make_request(prompt="test")
         await injector.inject_all("u1", req)
-        assert len(req.contexts) == 1
+        # L1 user msg 被去重(pop)，只有 L2/L3 extra_parts
         assert len(req.extra_user_content_parts) == 3
 
     async def test_inject_all_disabled(
