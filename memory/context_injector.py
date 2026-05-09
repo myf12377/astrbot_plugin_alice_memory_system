@@ -1,10 +1,40 @@
 """
 记忆上下文注入器 — 四管线独立注入。
 
-L1  → request.contexts（无标记，自然消失）
-L2-A → extra_user_content_parts（[周摘要]，覆盖式）
-L2-B → extra_user_content_parts（[L2记忆]，覆盖式）
-L3  → extra_user_content_parts（[L3记忆]，覆盖式）
+# ==============================================================================
+# 四管线架构
+# ==============================================================================
+
+每条管线持有独立标记，互不污染。注入只读，不写磁盘。
+
+  L1  → request.contexts
+         最近 N 轮对话（1轮=user+assistant），按日期分组
+         manage_context=true 时是 LLM 的唯一对话历史来源
+         末尾 user 消息被去重（避免与 req.prompt 重复）
+
+  L2-A → extra_user_content_parts [周摘要]
+         本周概括（趋势/模式/关键决策）
+         引导文本告知 LLM 日细节见 [L2记忆]
+         周一跳过（Scheduler 凌晨已清空周摘要）
+
+  L2-B → extra_user_content_parts [L2记忆]
+         近 N 天的逐日细节
+         引导文本告知 LLM 周概括见 [周摘要]
+         过滤 hidden=true 的摘要
+
+  L3   → extra_user_content_parts [L3记忆]
+         语义检索 ChromaDB 向量库中的长期记忆
+         按 l3_merge_similarity 阈值过滤结果
+
+# ==============================================================================
+# 覆盖式注入策略
+# ==============================================================================
+
+L2/L3 使用"覆盖式"注入：每次请求删除上一轮的旧标记块，注入新块。
+_clean_marker() 确保 extra_user_content_parts 中每个管线只有 1 条当前数据。
+历史对话中的旧 [L2记忆] 块不会被 LLM 反复看到。
+
+L1 使用"追加式"注入到 contexts，因为 contexts 本身就是对话历史积攒。
 """
 
 from __future__ import annotations
@@ -73,17 +103,33 @@ class ContextInjector:
     ) -> None:
         """注入最近 N 轮 L1 对话到 request.contexts。
 
-        按日期分组，每天插入 system 日期标记。
-        l1_inject_rounds=0 时跳过。
+        数据来源: storage.get_recent_rounds() → 磁盘 JSON
+        轮次上限: l1_inject_rounds（默认 80 轮）
+        输出格式: {"role":"system","content":"[2026-05-09 对话]"}, {"role":"user","content":"..."}
+
+        # === 去重逻辑 ===
+        当前消息 "今天天气怎么样？" 会出现在两个地方:
+          (a) req.prompt — AstrBot 直接传给 LLM 的当前问题
+          (b) contexts 最后一条 — L1 注入的对话历史末尾
+        如果不处理，LLM 看到同一句话两次。
+
+        解决: pop 掉最后一条 user 消息 + 连带清理尾部 system 日期标记。
+        这样 contexts 中是"纯净的历史对话"，prompt 是"当前问题"，自然衔接。
+
+        l1_inject_rounds=0 时跳过（仅使用 L2+L3 记忆）。
         """
         rounds = self._storage.get_recent_rounds(user_id)
         if not rounds:
             return
 
+        # ---- 去重 ----
         # 去掉最后一条 user 消息（会通过 req.prompt 传入，避免重复）
         if rounds and rounds[-1].get("role") == "user":
             rounds.pop()
             # 连带清理尾部残留的 system 日期标记
+            # 例如: [...assistant, system:"[2026-05-09]", user:"今天天气？"]
+            # pop user 后剩下 [...assistant, system:"[2026-05-09]"]
+            # 此时 system 标记成了孤立标记（无后续对话），一并清理
             if rounds and rounds[-1].get("role") == "system":
                 rounds.pop()
 
@@ -97,9 +143,11 @@ class ContextInjector:
     async def inject_l2_path_a(
         self, user_id: str, request: ProviderRequest,
     ) -> None:
-        """注入周摘要到 extra_user_content_parts [周摘要]。
+        """注入本周概括到 [周摘要]。
 
-        周一跳过（Scheduler 凌晨已清空）。
+        周一跳过: Scheduler 凌晨已清空周摘要，周一整天无周摘要可注入。
+        引导文本: 告知 LLM 日细节由 [L2记忆] 提供 → 提示 LLM 参考另一管线获取逐日信息。
+        覆盖式: _clean_marker 移除上一轮的旧 [周摘要] 块。
         """
         if self._is_monday():
             return

@@ -1,6 +1,77 @@
-"""Alice Memory Plugin — AstrBot 三层记忆系统主入口。
+"""
+Alice Memory Plugin — AstrBot 三层记忆系统主入口。
 
-L1 原始对话 / L2 双路中期记忆 / L3 长期向量记忆（衰减模型）。
+# ==============================================================================
+# 架构概览
+# ==============================================================================
+
+本插件实现类人三层记忆：
+  L1 短期记忆 — 原始对话轮次滑窗（默认保留 200 轮，注入最近 80 轮）
+  L2 中期记忆 — Path A 周摘要 + Path B 日摘要，双路径分层互补
+  L3 长期记忆 — ChromaDB 向量存储 + 艾宾浩斯衰减模型
+
+# ==============================================================================
+# 核心数据流（一次用户消息的完整链路）
+# ==============================================================================
+
+用户发送消息
+  │
+  ▼
+on_llm_request() 钩子（本文件）
+  │
+  ├── [1] 身份识别: platform + platform_user_id → user_id（IdentityModule）
+  │
+  ├── [2] manage_context 判断:
+  │       如果开启 → req.contexts = [] 清空 AstrBot 自带历史
+  │       由插件 L1 注入的轮次对话完全替代
+  │       好处: 无重叠上下文，节省 token，时间线清晰
+  │
+  ├── [3] L1 存储: storage.append_dialogue(user_id, "user", content)
+  │       将用户消息写入磁盘 JSON（{data_dir}/l1/{uid}.json）
+  │
+  ├── [4] 记忆注入: injector.inject_all(user_id, req)
+  │       四管线独立注入到 req:
+  │       ├── inject_l1()  → req.contexts（最近 80 轮 + 日期标记）
+  │       ├── inject_l2_path_a() → extra_user_content_parts [周摘要]
+  │       ├── inject_l2_path_b() → extra_user_content_parts [L2记忆]
+  │       └── inject_l3()  → extra_user_content_parts [L3记忆]
+  │       L1 末尾 user 消息会被去重（避免与 req.prompt 重复）
+  │
+  └── [5] L3 晋升: analyzer.analyze(content) → 重要性评分
+          如果 score ≥ importance_threshold → vector_store.add_memory()
+          自动从 L1 原始对话晋升为 L3 长期记忆
+
+LLM 生成回复
+  │
+  ▼
+on_llm_response() 钩子（本文件）
+  └── [6] 存储助手回复: storage.append_dialogue(user_id, "assistant", completion)
+
+# ==============================================================================
+# 独立运行 vs 主动层联动
+# ==============================================================================
+
+独立模式（当前默认）:
+  记忆层通过 @filter.on_llm_request() 自主注入记忆
+  用户感知: 对话中自然出现 [周摘要][L2记忆][L3记忆] 等记忆标记
+
+主动层联动模式（未来）:
+  用户在 WebUI 将记忆层 hook_enabled 设为 false
+  主动层通过 context.get_all_stars() 获取本插件实例
+  调用 6 个公开 @property + 4 个 get_*_context() 方法
+  主动层自行决定注入策略，记忆层退居"记忆仓库"角色
+
+# ==============================================================================
+# 定时调度
+# ==============================================================================
+
+Scheduler 注册 6 段 cron 任务:
+  01:00 — Path B 日压缩（将昨日 L1 对话压缩为 L2 日摘要）
+  02:00 — L1 轮次裁剪（超过 l1_save_rounds 的旧轮次滑出）
+  03:00 — L3 衰减+灰区重评（艾宾浩斯遗忘曲线 + LLM 重评）
+  04:00 — Path A 周压缩（合并生成渐进周摘要）
+  周一 05:00 — 周摘要重置
+  动态 cron — L3 月度相似记忆合并
 """
 
 from astrbot.api import logger
@@ -19,12 +90,25 @@ from .memory.vector_store.vector_store import VectorStore
 
 
 class AliceMemoryPlugin(Star):
-    """Alice 三层记忆系统插件主类。"""
+    """Alice 三层记忆系统插件主类。
+
+    继承 AstrBot Star 基类，通过 @filter 装饰器注册钩子。
+    __init_subclass__ 机制自动将本类注册为 AstrBot 插件。
+    """
 
     def __init__(self, context: Context, config: dict | None = None) -> None:
+        """
+        Args:
+            context: AstrBot 上下文，提供 llm_generate/cron_manager/get_all_stars 等能力
+            config:  框架从 WebUI 读取的原始配置 dict → PluginConfig.from_framework_config() 转换
+        """
         super().__init__(context)
 
-        # Layer 0: 配置
+        # =====================================================================
+        # Layer 0: 配置加载
+        # =====================================================================
+        # from_framework_config() 自动过滤无效 key，缺失 key 使用 Field default
+        # 这意味着用户可以只在 WebUI 修改关心的配置项，其余全部用默认值
         self.plugin_config = PluginConfig.from_framework_config(config or {})
         logger.info(
             "[AliceMemory] PluginConfig 加载完成 | fields=%d | data_dir=%s",
@@ -32,21 +116,31 @@ class AliceMemoryPlugin(Star):
             self.plugin_config.data_dir,
         )
 
-        # Layer 1: 身份 & 存储 & 向量 & 分析
+        # =====================================================================
+        # Layer 1: 身份 & 存储 & 向量 & 分析（独立不互依赖）
+        # =====================================================================
+        # IdentityModule: 将不同平台(QQ/微信)的用户 ID 映射为统一内部 UUID
         self._identity = IdentityModule(self.plugin_config.data_dir)
+        # MemoryStorage: L1/L2/L3 三层 JSON 文件持久化
         self._storage = MemoryStorage(self.plugin_config)
 
-        # EmbeddingProvider 接线
+        # ---- EmbeddingProvider 接线（P6 核心改动） ----
+        # 当 l3_embedding_provider="auto" 时，从 AstrBot 获取已配置的 Embedding Provider
+        # 封装为 callable 传给 VectorStore，用于 L3 记忆的语义检索
+        # 默认 "chroma" → embedding_func=None → 使用 ChromaDB 内置 all-MiniLM-L6-v2
         embedding_func = None
         if self.plugin_config.l3_embedding_provider == "auto":
             providers = context.get_all_embedding_providers()
             if providers:
-                provider = providers[0]
+                provider = providers[0]  # 使用第一个可用的 Embedding Provider
                 logger.info(
                     "[AliceMemory] 接入 EmbeddingProvider | type=%s",
                     provider.__class__.__name__,
                 )
 
+                # embedding_bridge: 将 AstrBot Provider API 适配为 VectorStore 期望的签名
+                # 输入: list[str]  输出: list[list[float]]
+                # 优先调用 get_embeddings() 批量接口，降级为 get_embedding() 逐个调用
                 async def embedding_bridge(texts: list[str]) -> list[list[float]]:
                     if hasattr(provider, "get_embeddings"):
                         return await provider.get_embeddings(texts)
@@ -67,19 +161,28 @@ class AliceMemoryPlugin(Star):
             self.plugin_config,
             embedding_func=embedding_func,
         )
+        # ImportanceAnalyzer: 调用 LLM 对内容进行重要性评分（0-10）
         self._analyzer = ImportanceAnalyzer(context, self.plugin_config)
         logger.info(
             "[AliceMemory] 模块就绪 | Identity ✓ | Storage ✓ | VectorStore ✓ | Analyzer ✓"
         )
 
+        # =====================================================================
         # Layer 2+3: 压缩 & 注入
+        # =====================================================================
+        # DialogueCompressor: Path A（周压缩）和 Path B（日压缩）双路 LLM 摘要
         self._compressor = DialogueCompressor(context, self._storage, self.plugin_config)
+        # ContextInjector: 四管线独立注入 — L1/L2-A/L2-B/L3
         self._injector = ContextInjector(
             self._storage, self._vector_store, self._identity, self.plugin_config,
         )
         logger.info("[AliceMemory] 模块就绪 | Compressor ✓ | ContextInjector ✓")
 
-        # Layer 4: 调度
+        # =====================================================================
+        # Layer 4: 定时调度
+        # =====================================================================
+        # Scheduler 在 start() 中向 AstrBot CronJobManager 注册 6 项 cron 任务
+        # 注意: 当前使用同步 start()（非 async initialize()），框架兼容
         self._scheduler = Scheduler(
             context, self._storage, self._identity, self._vector_store,
             self.plugin_config, self._compressor, self._analyzer,
@@ -91,6 +194,10 @@ class AliceMemoryPlugin(Star):
 
     # =========================================================================
     # 公开接口 — 供主动层/中间层调用
+    #
+    # 这些 @property 将内部模块暴露为只读接口。
+    # 主动层通过 context.get_all_stars() 获取本插件实例后，
+    # 可直接调用 plugin.storage / plugin.injector / ... 等。
     # =========================================================================
 
     @property
@@ -124,48 +231,73 @@ class AliceMemoryPlugin(Star):
         return self._analyzer
 
     # =========================================================================
-    # LLM 钩子
+    # LLM 钩子 — AstrBot 框架在 LLM 调用前后触发
     # =========================================================================
 
     @filter.on_llm_request()
     async def on_llm_request(
         self, event: AstrMessageEvent, req: ProviderRequest
     ) -> None:
-        """LLM 请求前 — 存储对话 + 注入记忆上下文 + L3 晋升判断。"""
+        """LLM 请求前钩子 — 存储对话 + 注入记忆上下文 + L3 晋升判断。
+
+        执行顺序决定了数据流的完整性:
+          (1) 先落盘 → (2) 清空 AstrBot 历史（可选）→ (3) 从盘读回注入 → (4) 重要性评分
+
+        为什么先落盘再注入？
+          manage_context=true 时会清空 req.contexts。
+          如果先清空再注入，注入的 L1 数据完全来自磁盘 JSON（而非 AstrBot 自带的上下文），
+          这样保证了单一数据源，无重叠。
+        """
         try:
+            # ---- 钩子总开关 ----
+            # hook_enabled=false 时插件完全静默：不存储，不注入，不评分
+            # 用于紧急禁用或主动层接管模式
             if not self.plugin_config.hook_enabled:
                 return
 
+            # ---- 身份识别 ----
+            # 跨平台统一身份: platform(如 qq_official) + platform_user_id(如 QQ号)
+            # → 内部 UUID。首次出现的用户自动注册。
             platform = event.get_platform_name()
             platform_user_id = event.get_sender_id()
             user_id = self._identity.get_user_id(platform, platform_user_id)
             if not user_id:
                 user_id = self._identity.register_user(platform, platform_user_id)
 
+            # 空消息跳过（如图片消息无文本）
             content = event.get_message_str() or ""
             if not content.strip():
                 return
 
-            # 清空 AstrBot 对话历史（由插件全权管理上下文）
+            # ---- manage_context: 可选的全权接管模式 ----
+            # 开启后: req.contexts = [] → AstrBot 自带对话历史不送入 LLM
+            # 由插件 L1 注入的轮次对话完全替代
+            # 默认 false，不影响标准 AstrBot 行为
             if self.plugin_config.manage_context:
                 req.contexts = []
                 logger.info("[AliceMemory] 已清空 AstrBot 对话历史")
 
-            # 存储到 L1
+            # ---- L1 存储: 先落盘 JSON ----
+            # 无论 manage_context 是否开启，都将原始对话存入磁盘
+            # 这是所有记忆管线的数据来源
             self._storage.append_dialogue(user_id, "user", content)
             logger.debug(
                 "[AliceMemory] L1 存储 | uid=%s... | role=user | len=%d",
                 user_id[:8], len(content),
             )
 
-            # 注入全部记忆管线
+            # ---- 记忆注入: 从磁盘读取 → 注入 req ----
+            # inject_all 按 L1/L2-A/L2-B/L3 顺序依次注入
+            # L1 末尾的 user 消息（=当前消息）会被去重，因为 req.prompt 已经包含它
             await self._injector.inject_all(user_id, req)
             logger.info(
                 "[AliceMemory] 注入完成 | contexts=%d | extra_parts=%d",
                 len(req.contexts), len(req.extra_user_content_parts),
             )
 
-            # L3 晋升判断
+            # ---- L3 晋升: 重要性评分 ----
+            # 对每条用户消息调用 LLM 评分（0-10 分）
+            # 分数 ≥ importance_threshold(默认8) → 自动存入 L3 向量记忆
             if self.plugin_config.l3_enabled:
                 try:
                     score = await self._analyzer.analyze(content)
@@ -177,22 +309,32 @@ class AliceMemoryPlugin(Star):
                         vid = await self._vector_store.add_memory(
                             user_id, content, {"importance": score},
                         )
-                        logger.info("[AliceMemory] L3 晋升 | vid=%s | score=%d", vid[:8], score)
+                        logger.info(
+                            "[AliceMemory] L3 晋升 | vid=%s | score=%d",
+                            vid[:8], score,
+                        )
                 except Exception as e:
+                    # L3 晋升失败不应阻塞正常对话
                     logger.error("[AliceMemory] L3 晋升失败 | %s", e)
 
         except Exception:
+            # 顶层兜底: 无论如何不让插件崩溃影响 AstrBot 正常运行
             logger.error("[AliceMemory] on_llm_request 异常", exc_info=True)
 
     @filter.on_llm_response()
     async def on_llm_response(
         self, event: AstrMessageEvent, resp: LLMResponse
     ) -> None:
-        """LLM 响应后 — 存储助手回复到 L1。"""
+        """LLM 响应后钩子 — 将助手回复存入 L1 磁盘。
+
+        这使得下一轮对话的 L1 注入能包含完整的 user+assistant 轮次。
+        hook_enabled=false 时跳过（与 on_llm_request 保持一致）。
+        """
         try:
             if not self.plugin_config.hook_enabled:
                 return
 
+            # 提取纯文本回复（兼容不同 LLM Provider 的返回格式）
             completion = getattr(resp, "completion_text", "") or ""
             if not completion.strip():
                 return
@@ -213,14 +355,24 @@ class AliceMemoryPlugin(Star):
             logger.error("[AliceMemory] on_llm_response 异常", exc_info=True)
 
     # =========================================================================
-    # /compact — 手动压缩
+    # 用户命令 — 通过 @filter.command() 注册
+    # 所有命令返回 AsyncGenerator，用 yield event.plain_result() 回复
     # =========================================================================
 
     @filter.command("compact")
     async def cmd_compact(
         self, event: AstrMessageEvent, date: str | None = None
     ):
-        """手动压缩记忆。/compact → Path A 周压缩，/compact 2026-04-25 → Path B 日压缩。"""
+        """手动压缩记忆。
+
+        无参数 → Path A 周压缩（合并式周摘要）:
+          原料: 已有周摘要 + 今日 L1 + Path B 日摘要
+          输出: 覆盖式周摘要（写入 weekly/{uid}.json）
+
+        有日期 → Path B 日压缩（提取式日摘要）:
+          原料: 指定日期的 L1 对话
+          输出: 日摘要（写入 l2/{uid}.json）
+        """
         platform = event.get_platform_name()
         platform_user_id = event.get_sender_id()
         user_id = self._identity.get_user_id(platform, platform_user_id)
@@ -230,18 +382,21 @@ class AliceMemoryPlugin(Star):
 
         try:
             if date:
+                # 带日期参数 = Path B 日压缩
                 item = await self._compressor.compress_day(user_id, date)
                 if item is None:
                     yield event.plain_result(f"[AliceMemory] {date} 无对话可压缩")
                     return
                 result_text = f"{date} 对话已压缩为日摘要"
             else:
+                # 无参数 = Path A 周压缩
                 item = await self._compressor.compress_context_summary(user_id)
                 if item is None:
                     yield event.plain_result("[AliceMemory] 无内容可压缩为周摘要")
                     return
                 result_text = "周摘要已更新"
 
+            # 根据 manual_compress_feedback_mode 生成用户可见的反馈
             feedback = await self._build_feedback(user_id, result_text)
             yield event.plain_result(feedback)
 
@@ -249,15 +404,16 @@ class AliceMemoryPlugin(Star):
             logger.error("[AliceMemory] /compact 失败 | %s", e, exc_info=True)
             yield event.plain_result(f"[AliceMemory] 压缩失败: {e}")
 
-    # =========================================================================
-    # /important — 标记重要记忆 → L3
-    # =========================================================================
-
     @filter.command("important")
     async def cmd_important(
         self, event: AstrMessageEvent, *, content: str = ""
     ):
-        """手动标记重要记忆。/important <内容> → 分析并存入 L3。"""
+        """手动标记重要记忆 → 分析重要性并直接存入 L3。
+
+        使用方式: /important <内容>
+        流程: LLM 评分 → 调用 vector_store.add_memory() 存入 ChromaDB
+        与自动晋升的区别: 跳过 importance_threshold 判断，直接存入
+        """
         if not content.strip():
             yield event.plain_result("[AliceMemory] 用法: /important <内容>")
             return
@@ -282,15 +438,14 @@ class AliceMemoryPlugin(Star):
             logger.error("[AliceMemory] /important 失败 | %s", e, exc_info=True)
             yield event.plain_result(f"[AliceMemory] 存入失败: {e}")
 
-    # =========================================================================
-    # /forget — 删除记忆
-    # =========================================================================
-
     @filter.command("forget")
     async def cmd_forget(
         self, event: AstrMessageEvent, memory_id: str = ""
     ):
-        """删除 L3 记忆。/forget <vector_id>。"""
+        """删除 L3 记忆。使用方式: /forget <记忆ID>。
+
+        记忆 ID 可以从 /show_memory 的返回结果中获取（id:XXXXXXXX 前8位）。
+        """
         if not memory_id.strip():
             yield event.plain_result("[AliceMemory] 用法: /forget <记忆ID>")
             return
@@ -300,15 +455,15 @@ class AliceMemoryPlugin(Star):
         else:
             yield event.plain_result(f"[AliceMemory] 记忆 {memory_id[:8]} 未找到")
 
-    # =========================================================================
-    # /show_memory — 搜索 L3 记忆
-    # =========================================================================
-
     @filter.command("show_memory")
     async def cmd_show_memory(
         self, event: AstrMessageEvent, *, query: str = ""
     ):
-        """搜索 L3 记忆。/show_memory <查询>。"""
+        """语义搜索 L3 向量记忆。使用方式: /show_memory <查询>。
+
+        流程: 查询词 → embedding → ChromaDB 语义检索 → 返回 top-5 结果。
+        每次检索触发 access_count+1，增加记忆的"生命加成"（衰减模型中更难被遗忘）。
+        """
         if not query.strip():
             yield event.plain_result("[AliceMemory] 用法: /show_memory <查询>")
             return
@@ -328,7 +483,7 @@ class AliceMemoryPlugin(Star):
 
             lines = ["[AliceMemory] L3 记忆搜索结果:"]
             for i, r in enumerate(results, 1):
-                content = r.get("content", "")[:80]
+                content = r.get("content", "")[:80]  # 截断显示，避免刷屏
                 vid = r.get("id", "?")[:8]
                 meta = r.get("metadata", {})
                 score = meta.get("importance", "?")
@@ -340,15 +495,22 @@ class AliceMemoryPlugin(Star):
             yield event.plain_result(f"[AliceMemory] 搜索失败: {e}")
 
     # =========================================================================
-    # 压缩反馈
+    # 内部方法
     # =========================================================================
 
     async def _build_feedback(self, user_id: str, default_text: str) -> str:
-        """根据 manual_compress_feedback_mode 生成压缩反馈。"""
+        """根据 manual_compress_feedback_mode 配置生成压缩反馈。
+
+        四种模式:
+          silent  — 不反馈（仅用于 cron 定时压缩）
+          fixed   — 返回预设固定文本
+          llm     — 调用 LLM 根据对话氛围动态生成反馈（默认）
+          visible — 直接展示周摘要正文
+        """
         mode = self.plugin_config.manual_compress_feedback_mode
 
         if mode == "silent":
-            return default_text  # 静默仅在 cron 场景，命令仍给反馈
+            return default_text
         elif mode == "fixed":
             return self.plugin_config.manual_compress_feedback_text
         elif mode == "visible":
@@ -359,7 +521,6 @@ class AliceMemoryPlugin(Star):
         elif mode == "llm":
             try:
                 prompt = self.plugin_config.manual_compress_llm_prompt
-                # 使用 compress_model 或默认
                 generate_config = {
                     "max_tokens": self.plugin_config.llm_max_tokens,
                     "temperature": self.plugin_config.llm_temperature,

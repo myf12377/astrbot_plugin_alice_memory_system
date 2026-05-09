@@ -1,16 +1,24 @@
 """
 存储模块 — L1/L2/L3 三层记忆的 JSON 文件持久化。
 
-L1: 原始对话，按 user_id 存储，保留 N 天。
-L2: 每日摘要 / 周摘要，Path A（周摘要）和 Path B（日摘要）逻辑分离。
-L3: 重要记忆元数据，按 user_id 存储。
+# === 文件结构 ===
+  {data_dir}/
+    l1/{user_id}.json       # L1 原始对话 — list[dict]
+    l2/{user_id}.json       # L2 Path B 日摘要 — list[dict]
+    l3/{user_id}.json       # L3 记忆元数据（辅助，主存是 ChromaDB）
+    weekly/{user_id}.json   # L2 Path A 周摘要 — list[dict]（单元素）
 
-文件结构:
-    {data_dir}/
-      l1/{user_id}.json       # list[L1MemoryItem]
-      l2/{user_id}.json       # list[L2SummaryItem]
-      l3/{user_id}.json       # list[L3MemoryItem]
-      weekly/{user_id}.json   # dict: {user_id, summary, week_start, updated_at}
+# === L1 轮次滑窗（P1 核心改动） ===
+旧: 按天数清理（l1_retention_days=3，凌晨删除 3 天前全部数据）
+  问题: "3天断崖" — 沉默几天后全部失忆，体验割裂
+新: 按轮次滑窗（1轮=user+assistant，默认保留 200 轮）
+  效果: 沉默期不丢记忆，密集期旧轮次平滑滑出
+  get_recent_rounds()  → 读取最近 N 轮+日期分组标记 → inject_l1 使用
+  trim_to_recent_rounds() → 裁剪超出 N 轮 → Scheduler 02:00 调用
+
+# === 数据向前兼容 ===
+  L1MemoryItem.from_dict() 用 .get() 兜底读取旧字段
+  旧 JSON 中多余的 compressed/content_type/media_url 键被静默忽略
 """
 
 from __future__ import annotations
@@ -340,17 +348,16 @@ class MemoryStorage:
         user_id: str,
         keep_rounds: int | None = None,
     ) -> int:
-        """裁剪 L1 只保留最近 N 轮。
+        """裁剪 L1 只保留最近 N 轮（Scheduler 02:00 调用）。
 
-        Args:
-            user_id: 用户标识符。
-            keep_rounds: 保留轮数，为 None 使用 config.l1_save_rounds。
-
-        Returns:
-            删除的条目数。
+        与旧版 delete_old_l1_dialogues 的区别:
+          旧: 按天数整批删除（如 3 天前全部删除）
+          新: 按轮次数渐进滑出（如超过 200 轮的最旧轮次滑出）
+        keep_rounds=0 时清空全部数据。
         """
         if keep_rounds is None:
             keep_rounds = self._config.l1_save_rounds
+        # keep_rounds=0: 清空全部
         if keep_rounds <= 0:
             path = self._get_l1_path(user_id)
             data = self._load_json(path)

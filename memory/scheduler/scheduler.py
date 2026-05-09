@@ -50,7 +50,12 @@ class Scheduler:
 
     @staticmethod
     def _days_to_cron(days: int) -> str:
-        """将间隔天数映射为 cron 表达式（6:00 执行）。"""
+        """将 l3_merge_interval_days 映射为 cron 表达式（P8 动态 cron）。
+
+        因为 cron 不支持"每 N 天"的任意值，将连续值映射为 7 个离散档位:
+          每天 → 每周日 → 半月 → 约10天 → 每月 → 每2月 → 每季度 → 每半年 → 每年
+        默认 30 天 → "0 6 1 * *"（每月1日6:00），与旧版硬编码完全一致。
+        """
         if days <= 1:
             return "0 6 * * *"
         elif days <= 7:
@@ -236,7 +241,15 @@ class Scheduler:
     # ==================================================================
 
     async def _l3_merge(self) -> None:
-        """贪心法合并 L3 相似记忆。"""
+        """贪心法合并 L3 相似记忆（P8 新增，cron 由 _days_to_cron 动态决定）。
+
+        算法:
+          1. 获取用户全部 L3 记忆，按 importance 降序（优先保留高价值）
+          2. 对每条记忆，用 ChromaDB 语义搜索找相似记忆
+          3. 相似度 ≥ l3_merge_similarity → LLM 合并为一条
+          4. 新分数 = max(s1, s2) + 0.5（合并后的记忆更重要）
+          5. 已消费的记忆不再参与后续合并（consumed set 去重）
+        """
         logger.info(
             "[AliceMemory] 定时触发 | L3 合并 (interval=%dd)",
             self._config.l3_merge_interval_days,

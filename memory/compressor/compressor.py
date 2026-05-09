@@ -198,7 +198,11 @@ class DialogueCompressor:
 
     @staticmethod
     def _looks_valid(text: str) -> bool:
-        """快速校验 LLM 返回内容是否为有效摘要而非 prompt 回显。"""
+        """校验 LLM 返回是否为有效摘要（P4 回移植）。
+
+        某些 LLM 可能回显 prompt 模板而非生成摘要。
+        检测: 文本太短(<5字符) 或 开头包含 prompt 指令关键词 → 无效。
+        """
         if not text or len(text) < 5:
             return False
         prompt_markers = ["请提供", "请根据", "请按照", "请输出", "请仔细"]
