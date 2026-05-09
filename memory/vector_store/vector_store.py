@@ -102,10 +102,11 @@ class VectorStore:
             return
         try:
             existing = self._collection.get(limit=1, include=["embeddings"])
-            if not existing["embeddings"] or existing["embeddings"][0] is None:
+            emb = existing.get("embeddings")
+            if emb is None or len(emb) == 0 or emb[0] is None:
                 return
 
-            old_dim = len(existing["embeddings"][0])
+            old_dim = len(emb[0])
             test_vec = await self._call_embedding_func_async(["dimension_test"])
             if not test_vec:
                 return
