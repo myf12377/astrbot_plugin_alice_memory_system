@@ -102,7 +102,7 @@ class VectorStore:
             return
         try:
             existing = self._collection.get(limit=1, include=["embeddings"])
-            if not existing["embeddings"] or not existing["embeddings"][0]:
+            if not existing["embeddings"] or existing["embeddings"][0] is None:
                 return
 
             old_dim = len(existing["embeddings"][0])
