@@ -59,11 +59,26 @@ class VectorStore:
             name=self._collection_name,
             metadata={"description": "AstrBot L3 memory storage"},
         )
-        # 异步调度索引重建（不阻塞启动）
-        if self._embedding_func is not None:
+        # Provider 切换时，同步重建 collection + 异步重嵌入
+        if self._embedding_func is not None and self._collection.count() > 0:
             try:
-                loop = asyncio.get_event_loop()
-                loop.create_task(self._maybe_reindex())
+                # 读取全部旧数据（在删 collection 之前）
+                old_data = self._collection.get(
+                    include=["documents", "metadatas"],
+                )
+                if old_data["ids"]:
+                    logger.info(
+                        "[AliceMemory] 切换 EmbeddingProvider | 重建 L3 collection..."
+                    )
+                    # 删旧 collection（锁定了旧维度）→ 建新 collection（无维度锁定）
+                    self._client.delete_collection(self._collection_name)
+                    self._collection = self._client.create_collection(
+                        name=self._collection_name,
+                        metadata={"description": "AstrBot L3 memory storage"},
+                    )
+                    # 异步重嵌入（用新 provider 重算向量写回）
+                    loop = asyncio.get_event_loop()
+                    loop.create_task(self._reindex_async(old_data))
             except RuntimeError:
                 pass
 
@@ -96,48 +111,15 @@ class VectorStore:
     # 索引重建
     # ==================================================================
 
-    async def _maybe_reindex(self) -> None:
-        """检测 embedding 维度变化，必要时自动重建索引。"""
-        if not self._embedding_func:
-            return
+    async def _reindex_async(self, old_data: dict) -> None:
+        """异步用新 provider 重算向量并写回（collection 已在 _init_client 中重建）。"""
         try:
-            existing = self._collection.get(limit=1, include=["embeddings"])
-            emb = existing.get("embeddings")
-            if emb is None or len(emb) == 0 or emb[0] is None:
-                return
-
-            old_dim = len(emb[0])
-            test_vec = await self._call_embedding_func_async(["dimension_test"])
-            if not test_vec:
-                return
-            new_dim = len(test_vec[0])
-
-            if old_dim == new_dim:
-                return
-
-            logger.info(
-                "[AliceMemory] Embedding 变化 | %d→%d 维 | 重建 L3 索引...",
-                old_dim, new_dim,
-            )
-
-            all_data = self._collection.get(include=["documents", "metadatas"])
-            if not all_data["ids"]:
-                return
-
-            # ChromaDB collection 一旦有数据就锁定维度，update/delete+add 都绕不过
-            # 必须删掉整个 collection 重建
-            self._client.delete_collection(self._collection_name)
-            self._collection = self._client.create_collection(
-                name=self._collection_name,
-                metadata={"description": "AstrBot L3 memory storage"},
-            )
-
-            # 用新 provider 重算向量，逐批写回（数据已在内存中，不会丢失）
             batch_size = 50
-            for i in range(0, len(all_data["ids"]), batch_size):
-                batch_ids = all_data["ids"][i : i + batch_size]
-                batch_docs = all_data["documents"][i : i + batch_size]
-                batch_meta = all_data["metadatas"][i : i + batch_size]
+            total = len(old_data["ids"])
+            for i in range(0, total, batch_size):
+                batch_ids = old_data["ids"][i : i + batch_size]
+                batch_docs = old_data["documents"][i : i + batch_size]
+                batch_meta = old_data["metadatas"][i : i + batch_size]
                 new_vecs = await self._call_embedding_func_async(batch_docs)
                 self._collection.add(
                     ids=batch_ids,
@@ -145,9 +127,8 @@ class VectorStore:
                     embeddings=new_vecs,
                     metadatas=batch_meta,
                 )
-
             logger.info(
-                "[AliceMemory] L3 索引重建完成 | 条目=%d", len(all_data["ids"])
+                "[AliceMemory] L3 索引重建完成 | 条目=%d", total,
             )
         except Exception:
             logger.error("[AliceMemory] L3 索引重建失败", exc_info=True)
