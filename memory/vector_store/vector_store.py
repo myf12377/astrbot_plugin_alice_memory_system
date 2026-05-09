@@ -124,14 +124,18 @@ class VectorStore:
             if not all_data["ids"]:
                 return
 
+            # ChromaDB 不允许 update 改变向量维度，必须删旧加新
+            # 数据已在上面全部读入内存（documents + metadatas），不会丢失
             batch_size = 50
             for i in range(0, len(all_data["ids"]), batch_size):
                 batch_ids = all_data["ids"][i : i + batch_size]
                 batch_docs = all_data["documents"][i : i + batch_size]
                 batch_meta = all_data["metadatas"][i : i + batch_size]
                 new_vecs = await self._call_embedding_func_async(batch_docs)
-                self._collection.update(
+                self._collection.delete(ids=batch_ids)
+                self._collection.add(
                     ids=batch_ids,
+                    documents=batch_docs,
                     embeddings=new_vecs,
                     metadatas=batch_meta,
                 )
