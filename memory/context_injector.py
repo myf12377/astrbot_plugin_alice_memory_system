@@ -42,6 +42,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
+from astrbot.api import logger
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.agent.message import TextPart
 
@@ -136,6 +137,14 @@ class ContextInjector:
         for msg in rounds:
             request.contexts.append(msg)
 
+        # 统计：区分日期标记和实际对话
+        user_msgs = sum(1 for m in rounds if m.get("role") == "user")
+        sys_msgs = sum(1 for m in rounds if m.get("role") == "system")
+        logger.info(
+            "[AliceMemory] L1 注入 | 对话=%d轮 | 日期标记=%d | 总条数=%d",
+            user_msgs, sys_msgs, len(rounds),
+        )
+
     # ==================================================================
     # L2 Path A — 渐进周摘要
     # ==================================================================
@@ -164,6 +173,7 @@ class ContextInjector:
                 f"{weekly['summary']}"
             )),
         )
+        logger.info("[AliceMemory] L2-A 注入 | 周摘要=%d字", len(weekly["summary"]))
 
     # ==================================================================
     # L2 Path B — 每日磁盘摘要
@@ -193,6 +203,8 @@ class ContextInjector:
                 f"{combined}"
             )),
         )
+        visible = sum(1 for s in summaries if not s.hidden)
+        logger.info("[AliceMemory] L2-B 注入 | 日摘要=%d条(可见%d)", len(summaries), visible)
 
     # ==================================================================
     # L3 — 长期向量记忆
@@ -215,6 +227,7 @@ class ContextInjector:
         self._clean_marker(request, L3_MARKER)
 
         threshold = self._config.l3_merge_similarity
+        injected = 0
         for r in results:
             score = r.get("distance", 0)
             # distance 越低越相似（cosine distance = 1 - similarity）
@@ -225,6 +238,11 @@ class ContextInjector:
                     request.extra_user_content_parts.append(
                         TextPart(text=f"{L3_MARKER}\n{content}"),
                     )
+                    injected += 1
+        logger.info(
+            "[AliceMemory] L3 注入 | 检索到=%d条 | 注入=%d条(阈值≥%.2f)",
+            len(results), injected, threshold,
+        )
 
     # ==================================================================
     # 工具
