@@ -39,7 +39,8 @@ class VectorStore:
         Args:
             data_dir: 数据存储根目录。
             config: 插件配置（PluginConfig）。
-            embedding_func: 外部 embedding 函数，为 None 时使用 ChromaDB 内置。
+            embedding_func: 外部 embedding 函数。
+                为 None 时无嵌入能力（测试兼容），生产环境始终传 EmbeddingResolver。
         """
         self._config = config
         self._embedding_func = embedding_func
@@ -49,6 +50,9 @@ class VectorStore:
         )
         self._client: Any = None
         self._collection: Any = None
+        # 延迟迁移状态
+        self._migration_pending = False
+        self._old_collection_data: dict | None = None
         self._init_client(data_dir)
 
     def _init_client(self, data_dir: Path) -> None:
@@ -62,25 +66,55 @@ class VectorStore:
             name=self._collection_name,
             metadata={"description": "AstrBot L3 memory storage"},
         )
-        # Provider 切换时，从旧 collection 迁移数据到新 collection
-        if self._embedding_func is not None and self._collection.count() == 0:
-            try:
-                old_collection = self._client.get_collection(
-                    name="astrmemory_l3",
+        # 不立即迁移 — 因为 __init__ 时 EmbeddingProvider 可能尚未加载
+        # 改为标记迁移待处理，延迟到首次 L3 操作时执行 _ensure_migrated()
+        self._check_migration()
+
+    # ------------------------------------------------------------------
+    # 延迟迁移 — 旧 ChromaDB 内置数据 → 外部 provider
+    # ------------------------------------------------------------------
+
+    def _check_migration(self) -> None:
+        """检测旧 ChromaDB 内置 collection 是否有待迁移数据。
+
+        仅在外部 provider collection 为空时检测。
+        找到数据后标记 _migration_pending=True，不立即执行迁移
+        （因为 __init__ 时 EmbeddingProvider 可能尚未加载）。
+        """
+        if self._collection.count() > 0:
+            return  # 新 collection 已有数据，无需迁移
+        if self._embedding_func is None:
+            return  # 无外部 provider，无法迁移
+        try:
+            old = self._client.get_collection(name="astrmemory_l3")
+            old_data = old.get(include=["documents", "metadatas"])
+            if old_data["ids"]:
+                self._migration_pending = True
+                self._old_collection_data = old_data
+                logger.info(
+                    "[AliceMemory] 检测到旧 ChromaDB L3 数据 (%d 条)，将在首次 L3 操作时自动迁移",
+                    len(old_data["ids"]),
                 )
-                old_data = old_collection.get(
-                    include=["documents", "metadatas"],
-                )
-                if old_data["ids"]:
-                    logger.info(
-                        "[AliceMemory] 迁移 L3 数据 | chroma → external provider..."
-                    )
-                    loop = asyncio.get_event_loop()
-                    loop.create_task(self._reindex_async(old_data))
-                    # 删除旧 collection（不再需要）
-                    self._client.delete_collection("astrmemory_l3")
-            except Exception:
-                pass  # 旧 collection 不存在或为空，正常
+        except Exception:
+            pass  # 旧 collection 不存在，正常
+
+    async def _ensure_migrated(self) -> None:
+        """如有待迁移的旧 ChromaDB 数据，执行迁移。
+
+        在 add_memory() / search() 等异步方法开头调用，
+        确保迁移在 Provider 就绪后执行。
+        """
+        if not self._migration_pending or self._old_collection_data is None:
+            return
+        self._migration_pending = False
+        logger.info("[AliceMemory] 开始迁移旧 ChromaDB L3 数据...")
+        try:
+            await self._reindex_async(self._old_collection_data)
+            self._client.delete_collection("astrmemory_l3")
+            self._old_collection_data = None
+        except Exception as e:
+            logger.error("[AliceMemory] L3 旧数据迁移失败: %s", e)
+            self._migration_pending = True  # 下次重试
 
     # ------------------------------------------------------------------
     # embedding 工具
@@ -149,6 +183,8 @@ class VectorStore:
         if not self._ensure_collection():
             raise RuntimeError("向量存储未初始化")
 
+        await self._ensure_migrated()
+
         vector_id = str(uuid.uuid4())
         now = self._now_iso()
 
@@ -186,6 +222,8 @@ class VectorStore:
         """
         if not self._ensure_collection():
             return []
+
+        await self._ensure_migrated()
 
         query_vector: list[float] | None = None
         query_texts: list[str] | None = None

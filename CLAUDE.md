@@ -2,7 +2,7 @@
 
 `astrbot_alice_memory_modul` — 三层记忆存储系统（L1原始对话 / L2双路中期记忆 / L3长期向量记忆）。
 
-> **v2.0 重构完成** — 所有模块已迁移到 PluginConfig，89 项测试通过。
+> **v2.3 P10 完成** — EmbeddingResolver 延迟解析，彻底抛弃 ChromaDB 内置，86 项测试通过。
 
 ## AI 行为规则
 
@@ -20,10 +20,10 @@
 
 | 项目 | 路径 |
 |------|------|
-| 插件源码 | `C:\Users\lenovo\Projects\astrbot_alice_memory_modul\` |
+| 插件源码 | `C:\Users\lenovo\Projects\Masterpiece\astrbot_alice_memory_tier\` |
 | AstrBot 源码 | `C:\Users\lenovo\Projects\test\astrbot\` |
-| 插件部署位置 | `test/astrbot/data/plugins/astrbot_alice_memory_modul/` |
-| 插件数据目录 | `test/astrbot/data/plugin_data/astrbot_alice_memory_modul/` |
+| 插件部署位置 | `test/astrbot/data/plugins/astrbot_alice_memory_tier/` |
+| 插件数据目录 | `test/astrbot/data/plugin_data/astrbot_alice_memory_tier/` |
 
 **部署工作流**：源码目录编辑 → Git commit → 复制到部署位置 → AstrBot 集成测试。只改源码，不改副本。
 
@@ -57,17 +57,19 @@ PluginConfig (0) → Identity(1) / Storage(1) / VectorStore(1) / Analyzer(1)
                                      │
                                Scheduler(4)
                                      │
+                       EmbeddingResolver(Main内部)  ← P10 新增：延迟解析
+                                     │
                                 Main(5)
 ```
 
-**关键约束**：Injector 不依赖 Compressor（注入只读，压缩只写），Scheduler 是唯一的编排者，Main 是唯一的框架接触点。
+**关键约束**：Injector 不依赖 Compressor（注入只读，压缩只写），Scheduler 是唯一的编排者，Main 是唯一的框架接触点。EmbeddingResolver 延迟到首次 L3 操作时才解析 Provider（解决 AstrBot 插件先于 Provider 初始化的时序问题）。
 
 ## 调度索引
 
 | 场景 | 入口 | 调用链 |
 |------|------|--------|
 | 用户消息注入 | Main.on_llm_request | Identity→Storage(写L1)→Injector(读全部→注入req) |
-| 判断晋升L3 | Main.on_llm_request | Analyzer.analyze→VectorStore.add→find_similar→merge |
+| 判断晋升L3 | Main.on_llm_request | Analyzer.analyze→VectorStore.add→(_ensure_migrated延迟迁移)→find_similar→merge |
 | 01:00 Path B | Scheduler | Storage(L1)→Compressor(LLM)→Storage(写L2) |
 | 02:00 L1清理 | Scheduler | Storage.delete_old_l1_dialogues |
 | 03:00 L3衰减 | Scheduler | VectorStore.apply_decay→get_gray→Analyzer.batch_recheck |
@@ -106,7 +108,10 @@ class AliceMemoryPlugin(Star):
         # 按拓扑顺序初始化（Layer 0 → 5）
         self._identity = IdentityModule(self.plugin_config.data_dir)
         self._storage = MemoryStorage(self.plugin_config)
-        self._vector_store = VectorStore(self.plugin_config.data_dir, self.plugin_config)
+        # EmbeddingResolver 延迟解析 — 不在 __init__ 中立即获取 Provider
+        resolver = EmbeddingResolver(context, self.plugin_config.l3_embedding_provider)
+        self._vector_store = VectorStore(self.plugin_config.data_dir,
+                                         self.plugin_config, embedding_func=resolver)
         self._analyzer = ImportanceAnalyzer(context, self.plugin_config)
         self._compressor = DialogueCompressor(context, self._storage, self.plugin_config)
         self._injector = ContextInjector(self._storage, self._vector_store,
@@ -247,7 +252,7 @@ logger.debug(f"[AliceMemory] 阶段 | 详细信息...")
 
 ## 配置速查
 
-完整字段定义见 `memory/plugin_config.py` 的 `PluginConfig` 类（36字段，Pydantic BaseModel）。
+完整字段定义见 `memory/plugin_config.py` 的 `PluginConfig` 类（31字段，Pydantic BaseModel）。
 框架配置见 `_conf_schema.json`。
 工厂方法：`PluginConfig.defaults()` / `PluginConfig.from_framework_config(dict)`。
 

@@ -133,7 +133,7 @@ class PluginConfig(BaseModel):
     l3_enabled: bool = Field(default=True, description="L3 向量记忆开关")
     l3_embedding_provider: str = Field(
         default="auto",
-        description="向量嵌入模型：auto（AstrBot EmbeddingProvider）/ chroma（内置）",
+        description="向量嵌入模型：auto（自动选择）/ 或输入模型名称如 Qwen/Qwen3-VL-Embedding-8B",
     )
     importance_threshold: int = Field(
         default=8, ge=0, le=10,

@@ -89,6 +89,87 @@ from .memory.storage.storage import MemoryStorage
 from .memory.vector_store.vector_store import VectorStore
 
 
+class EmbeddingResolver:
+    """延迟解析 EmbeddingProvider，解决插件先于 Provider 初始化的时序问题。
+
+    AstrBot 启动顺序: 插件 __init__ → ProviderManager.initialize()
+    __init__ 中调用 get_all_embedding_providers() 始终返回空列表。
+
+    本类不立即解析，而是在首次调用（L3 操作时）才触发解析，
+    此时 ProviderManager 已初始化完毕，可正确获取 Provider。
+
+    解析逻辑:
+      "auto"               → providers[0]（首个可用）
+      "Qwen/Qwen3-VL-..."  → 按模型名匹配
+      指定模型未找到        → 降级 providers[0] + warn 日志
+      无任何 Provider       → Raise RuntimeError（无 ChromaDB 降级）
+    """
+
+    def __init__(self, context: Context, target_provider: str) -> None:
+        self._context = context
+        self._target = target_provider.strip()
+        self._resolved = False
+        self._bridge = None  # Callable | None
+
+    async def __call__(self, texts: list[str]) -> list[list[float]]:
+        if not self._resolved:
+            await self._resolve()
+        if self._bridge is None:
+            raise RuntimeError(
+                "[AliceMemory] L3 不可用：未找到可用的 EmbeddingProvider。"
+                "请在 AstrBot 中配置 Embedding 类型的 Provider。"
+            )
+        return await self._bridge(texts)
+
+    async def _resolve(self) -> None:
+        self._resolved = True
+        providers = self._context.get_all_embedding_providers()
+        if not providers:
+            logger.warning(
+                "[AliceMemory] 未找到任何 EmbeddingProvider，L3 向量记忆不可用。"
+                "请在 AstrBot 中配置 Embedding 类型的 Provider（如 Qwen/Qwen3-VL-Embedding-8B）。"
+            )
+            return
+
+        provider = None
+        if self._target == "auto":
+            provider = providers[0]
+            logger.info(
+                "[AliceMemory] 使用默认 EmbeddingProvider | type=%s",
+                provider.__class__.__name__,
+            )
+        else:
+            # 按模型名匹配: 支持完整名称匹配或子串匹配
+            for p in providers:
+                model = getattr(p, "model_name", "") or getattr(p, "model", "")
+                if model == self._target or self._target in model:
+                    provider = p
+                    logger.info(
+                        "[AliceMemory] 匹配 EmbeddingProvider | model=%s | type=%s",
+                        model, p.__class__.__name__,
+                    )
+                    break
+            if provider is None:
+                provider = providers[0]
+                logger.warning(
+                    "[AliceMemory] 未找到模型 '%s' 的 EmbeddingProvider，降级为 auto | 使用=%s",
+                    self._target, provider.__class__.__name__,
+                )
+
+        # embedding_bridge: 适配 AstrBot Provider API → VectorStore 期望签名
+        # 优先批量接口 get_embeddings()，降级逐个调用 get_embedding()
+        async def bridge(texts: list[str]) -> list[list[float]]:
+            if hasattr(provider, "get_embeddings"):
+                return await provider.get_embeddings(texts)
+            results: list[list[float]] = []
+            for t in texts:
+                vec = await provider.get_embedding(t)
+                results.append(vec)
+            return results
+
+        self._bridge = bridge
+
+
 class AliceMemoryPlugin(Star):
     """Alice 三层记忆系统插件主类。
 
@@ -124,42 +205,17 @@ class AliceMemoryPlugin(Star):
         # MemoryStorage: L1/L2/L3 三层 JSON 文件持久化
         self._storage = MemoryStorage(self.plugin_config)
 
-        # ---- EmbeddingProvider 接线（P6 核心改动） ----
-        # 当 l3_embedding_provider="auto" 时，从 AstrBot 获取已配置的 Embedding Provider
-        # 封装为 callable 传给 VectorStore，用于 L3 记忆的语义检索
-        # 默认 "chroma" → embedding_func=None → 使用 ChromaDB 内置 all-MiniLM-L6-v2
-        embedding_func = None
-        if self.plugin_config.l3_embedding_provider == "auto":
-            providers = context.get_all_embedding_providers()
-            if providers:
-                provider = providers[0]  # 使用第一个可用的 Embedding Provider
-                logger.info(
-                    "[AliceMemory] 接入 EmbeddingProvider | type=%s",
-                    provider.__class__.__name__,
-                )
-
-                # embedding_bridge: 将 AstrBot Provider API 适配为 VectorStore 期望的签名
-                # 输入: list[str]  输出: list[list[float]]
-                # 优先调用 get_embeddings() 批量接口，降级为 get_embedding() 逐个调用
-                async def embedding_bridge(texts: list[str]) -> list[list[float]]:
-                    if hasattr(provider, "get_embeddings"):
-                        return await provider.get_embeddings(texts)
-                    results = []
-                    for t in texts:
-                        vec = await provider.get_embedding(t)
-                        results.append(vec)
-                    return results
-
-                embedding_func = embedding_bridge
-            else:
-                logger.warning(
-                    "[AliceMemory] 未找到 EmbeddingProvider，降级为 ChromaDB 内置"
-                )
-
+        # ---- EmbeddingProvider 延迟解析（P10 核心改动） ----
+        # EmbeddingResolver 不在 __init__ 中立即解析 Provider，
+        # 而是延迟到首次 L3 操作（search/add_memory）时才解析。
+        # 这是因为 AstrBot 先初始化插件再初始化 ProviderManager，
+        # __init__ 中 get_all_embedding_providers() 始终返回空列表。
+        # 延迟解析后，首次 L3 调用时 Provider 已就绪，解析成功。
+        resolver = EmbeddingResolver(context, self.plugin_config.l3_embedding_provider)
         self._vector_store = VectorStore(
             self.plugin_config.data_dir,
             self.plugin_config,
-            embedding_func=embedding_func,
+            embedding_func=resolver,
         )
         # ImportanceAnalyzer: 调用 LLM 对内容进行重要性评分（0-10）
         self._analyzer = ImportanceAnalyzer(context, self.plugin_config)

@@ -98,12 +98,9 @@
   "l3_embedding_provider": {
     "type": "string",
     "description": "向量嵌入模型",
-    "default": "chroma",
-    "options": [
-      "auto",
-      "chroma"
-    ],
-    "hint": "chroma=ChromaDB 内置模型(默认) / auto=使用 AstrBot 已配置的 EmbeddingProvider。切换后自动重建索引，旧数据无损。"
+    "default": "auto",
+    "options": ["auto"],
+    "hint": "auto=使用首个可用嵌入模型 / 或输入模型名称(如 Qwen/Qwen3-VL-Embedding-8B)。未找到指定模型时自动降级为 auto。旧 ChromaDB 内置数据将在首次 L3 操作时自动迁移。"
   },
   "importance_threshold": {
     "type": "int",
