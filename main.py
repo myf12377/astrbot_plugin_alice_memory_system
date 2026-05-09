@@ -146,6 +146,10 @@ class AliceMemoryPlugin(Star):
             if not content.strip():
                 return
 
+            # 清空 AstrBot 对话历史（由插件全权管理上下文）
+            if self.plugin_config.manage_context:
+                req.contexts = []
+
             # 存储到 L1
             self._storage.append_dialogue(user_id, "user", content)
             logger.debug(
