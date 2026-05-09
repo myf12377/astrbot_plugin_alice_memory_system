@@ -1,8 +1,8 @@
 # AstrBot Alice Memory Plugin
 
-`astrbot_alice_memory_tier` — 三层记忆存储系统（L1原始对话 / L2双路中期记忆 / L3长期向量记忆）。
+`astrbot_alice_memory_modul` — 三层记忆存储系统（L1原始对话 / L2双路中期记忆 / L3长期向量记忆）。
 
-> **v2.3.2** — 为主动层联动增加公开 property + 纯读取方法。
+> **v2.0 重构完成** — 所有模块已迁移到 PluginConfig，89 项测试通过。
 
 ## AI 行为规则
 
@@ -20,29 +20,30 @@
 
 | 项目 | 路径 |
 |------|------|
-| 插件源码 | `C:\Users\lenovo\Projects\astrbot_alice_memory_tier\` |
+| 插件源码 | `C:\Users\lenovo\Projects\astrbot_alice_memory_modul\` |
 | AstrBot 源码 | `C:\Users\lenovo\Projects\test\astrbot\` |
-| 插件部署位置 | `test/astrbot/data/plugins/astrbot_alice_memory_tier/` |
-| 插件数据目录 | `test/astrbot/data/plugin_data/astrbot_alice_memory_tier/` |
+| 插件部署位置 | `test/astrbot/data/plugins/astrbot_alice_memory_modul/` |
+| 插件数据目录 | `test/astrbot/data/plugin_data/astrbot_alice_memory_modul/` |
 
 **部署工作流**：源码目录编辑 → Git commit → 复制到部署位置 → AstrBot 集成测试。只改源码，不改副本。
 
 ## 项目结构
 
 ```
-astrbot_alice_memory_tier/
-├── main.py                        # ✅ Star 子类主入口（第5层）— C2 完成（4命令+silent+manage_context）
-├── _conf_schema.json              # ✅ 39键框架配置 schema
-├── metadata.yaml                  # ✅ v2.3.0
+astrbot_alice_memory_modul/
+├── main.py                        # ✅ Star 子类主入口（第5层）— C2 完成（4命令+silent反馈）
+├── _conf_schema.json              # ✅ 36键框架配置 schema
+├── metadata.yaml                  # ✅ v2.0.0
 ├── memory/
-│   ├── plugin_config.py           # ✅ PluginConfig 39字段 Pydantic 模型（第0层）
-│   ├── context_injector.py        # ✅ 三管线注入（第3层）— L1分组+L2合并+L3按需
+│   ├── plugin_config.py           # ✅ PluginConfig 36字段 Pydantic 模型（第0层）
+│   ├── context_injector.py        # ✅ 上下文注入（第3层）— B2 完成
 │   ├── identity/                  # 跨平台身份 [稳定]
 │   ├── storage/                   # ✅ JSON 持久化（第1层）— A1 完成
 │   ├── vector_store/              # ✅ ChromaDB 向量（第1层）— A2 完成
 │   ├── analyzer/                  # ✅ LLM 重要性分析（第1层）— A3 完成
 │   ├── compressor/                # ✅ Path A/B 压缩（第2层）— B1 完成
-│   └── scheduler/                 # ✅ 6段定时调度（第4层）— C1 完成
+│   ├── scheduler/                 # ✅ 5段定时调度（第4层）— C1 完成
+│   └── migration/                 # 导入导出 [稳定]
 ```
 
 ## 依赖拓扑
@@ -50,7 +51,7 @@ astrbot_alice_memory_tier/
 ```
 PluginConfig (0) → Identity(1) / Storage(1) / VectorStore(1) / Analyzer(1)
                                      │
-                              Compressor(2)
+                              Compressor(2) / Migration(2)
                                      │
                               ContextInjector(3)
                                      │
@@ -65,21 +66,22 @@ PluginConfig (0) → Identity(1) / Storage(1) / VectorStore(1) / Analyzer(1)
 
 | 场景 | 入口 | 调用链 |
 |------|------|--------|
-| 用户消息注入 | Main.on_llm_request | Identity→Storage(写L1)→[清空contexts]→Injector(读全部→注入req) |
+| 用户消息注入 | Main.on_llm_request | Identity→Storage(写L1)→Injector(读全部→注入req) |
 | 判断晋升L3 | Main.on_llm_request | Analyzer.analyze→VectorStore.add→find_similar→merge |
 | 01:00 Path B | Scheduler | Storage(L1)→Compressor(LLM)→Storage(写L2) |
-| 02:00 L1+L2清理 | Scheduler | Storage.trim_to_recent_rounds(l1_save_rounds) + Storage.delete_old_summaries(ttl=7) |
+| 02:00 L1清理 | Scheduler | Storage.delete_old_l1_dialogues |
 | 03:00 L3衰减 | Scheduler | VectorStore.apply_decay→get_gray→Analyzer.batch_recheck |
 | 04:00 Path A | Scheduler | Storage(L1+L2+周)→Compressor(LLM)→Storage(覆写周) |
 | 周一05:00 | Scheduler | Storage.clear_weekly_summary |
-| 每月1日06:00 | Scheduler | VectorStore.find_similar→Analyzer.merge→VectorStore.merge_memories |
 | /compact | Main命令 | Compressor→Storage |
 | /show_memory | Main命令 | VectorStore.search |
+| 导出/导入 | Main命令 | MigrationModule |
 
 上下文字段注入位置：
-- L1 → `request.contexts`（按日期分组，system 标记日期边界）
-- L2 → `extra_user_content_parts`（标记 `[L2记忆]`，周摘要+非本周日摘要去重合并）
-- L3 → `extra_user_content_parts`（标记 `[L3记忆]`，按需语义检索）
+- L1 → `request.contexts`（无标记，自然消失）
+- L2 Path A → `extra_user_content_parts`（标记 `[周摘要]`，覆盖式）
+- L2 Path B → `extra_user_content_parts`（标记 `[L2记忆]`，覆盖式）
+- L3 → `extra_user_content_parts`（标记 `[L3记忆]`，覆盖式）
 
 ## 钩子系统
 
@@ -112,40 +114,8 @@ class AliceMemoryPlugin(Star):
         self._scheduler = Scheduler(context, self._storage, self._identity,
                                      self._vector_store, self.plugin_config,
                                      self._compressor, self._analyzer)
-        # start() 在 async initialize() 中调用（Star 生命周期钩子）
-
-    async def initialize(self) -> None:
-        """框架在 __init__ 后自动调用 — 注册定时任务。"""
-        await self._scheduler.start()
+        self._scheduler.start()
 ```
-
-### 公开接口 — 供主动层/中间层调用
-
-以下 property 暴露内部模块的只读引用，供外部插件（主动层、中间层）调用。调用方式：
-
-```python
-memory_plugin = context.get_all_stars()  # 获取 AliceMemoryPlugin 实例
-storage = memory_plugin.storage           # MemoryStorage
-injector = memory_plugin.injector         # ContextInjector
-```
-
-| Property | 类型 | 说明 |
-|----------|------|------|
-| `storage` | `MemoryStorage` | L1/L2 读写 |
-| `vector_store` | `VectorStore` | L3 向量存储 |
-| `identity` | `IdentityModule` | 跨平台身份映射 |
-| `injector` | `ContextInjector` | 上下文注入（含纯读取方法） |
-| `compressor` | `DialogueCompressor` | 对话压缩 |
-| `analyzer` | `ImportanceAnalyzer` | 重要性评分 |
-
-ContextInjector 新增 4 个纯读取方法（不操作 req，返回格式化文本）：
-
-| 方法 | 返回 | 说明 |
-|------|------|------|
-| `get_l1_context(user_id)` | `str \| None` | L1 日内对话 |
-| `get_l2_path_a_context(user_id)` | `str \| None` | Path A 周摘要 |
-| `get_l2_path_b_context(user_id)` | `str \| None` | Path B 日摘要 |
-| `get_l3_context(user_id, query)` | `awaitable str \| None` | L3 语义检索 |
 
 ### 钩子注册
 
@@ -220,16 +190,26 @@ async def cmd_show(self, event: AstrMessageEvent, query: str):
 
 ### 注入管线开关
 
-三管线由 config 控制，ContextInjector.inject_all() 内部调度（顺序：L2→L3→L1）：
+每条管线由 config 独立控制，ContextInjector 内部判断：
 
 ```python
-# ContextInjector.inject_all() 内部：
-if self._config.inject_l2_path_a or self._config.inject_l2_path_b:
-    await self.inject_l2_merged(user_id, request)
-if self._config.inject_l3:
-    await self.inject_l3(user_id, request)
-if self._config.inject_l1:
-    await self.inject_l1(user_id, request)
+# Main.on_llm_request 中：
+user_id = self._identity.get_user_id(platform, platform_user_id)
+if not user_id:
+    return
+
+# 存储（不受注入开关影响）
+self._storage.append_dialogue(user_id, role, content)
+
+# 注入（按管线开关独立控制）
+if self.plugin_config.inject_l1:
+    await self._injector.inject_l1(user_id, req)
+if self.plugin_config.inject_l2_path_b:
+    await self._injector.inject_l2_path_b(user_id, req)
+if self.plugin_config.inject_l2_path_a:
+    await self._injector.inject_l2_path_a(user_id, req)
+if self.plugin_config.inject_l3:
+    await self._injector.inject_l3(user_id, req)
 ```
 
 ## 调试日志
@@ -255,21 +235,19 @@ logger.debug(f"[AliceMemory] 阶段 | 详细信息...")
 |------|------|------|
 | `__init__` 完成 | INFO | `插件初始化 | fields=N | data_dir=...` |
 | 各 Layer 模块就绪 | INFO | `模块就绪 | Storage ✓ | VectorStore ✓ | ...` |
-| Scheduler 启动 | INFO | `定时任务注册 | tasks=6` |
+| Scheduler 启动 | INFO | `定时任务注册 | tasks=5` |
 | on_llm_request 入口 | INFO | `on_llm_request | uid=xxx(8) | msg_len=N` |
-| manage_context 清空 | INFO | `已清空 AstrBot 对话历史` |
 | 每条管线注入 | DEBUG | `注入 L1: N条 → contexts` / `注入 L2 Path B: 最近N天` |
-| 注入完成 | INFO | `注入完成 | L1=N条 | extra_parts=N` |
+| 注入完成 | INFO | `注入完成 | contexts+N | extra_parts+N` |
 | on_llm_response | DEBUG | `助手回复存储 | uid=xxx(8) | len=N` |
 | L3 晋升判断 | DEBUG | `重要性评分 | score=N | threshold=N | promote=True/False` |
 | 钩子异常 | ERROR | `钩子异常 | on_llm_request | {e}` + exc_info=True |
 | Scheduler 任务执行 | INFO | `定时任务 | 01:00 Path B | uid=N users` |
 | Scheduler 任务异常 | ERROR | `定时任务失败 | Path B | {e}` + exc_info=True |
-| Compressor LLM 降级 | WARNING | `模型 xxx 调用失败，降级使用 provider 默认模型` |
 
 ## 配置速查
 
-完整字段定义见 `memory/plugin_config.py` 的 `PluginConfig` 类（39字段，Pydantic BaseModel）。
+完整字段定义见 `memory/plugin_config.py` 的 `PluginConfig` 类（36字段，Pydantic BaseModel）。
 框架配置见 `_conf_schema.json`。
 工厂方法：`PluginConfig.defaults()` / `PluginConfig.from_framework_config(dict)`。
 

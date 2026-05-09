@@ -212,10 +212,7 @@ class MemoryStorage:
     # ==================================================================
 
     def append_dialogue(
-        self,
-        user_id: str,
-        role: str,
-        content: str,
+        self, user_id: str, role: str, content: str,
     ) -> L1MemoryItem:
         """添加一条对话到 L1。
 
@@ -241,9 +238,7 @@ class MemoryStorage:
         return item
 
     def get_l1_dialogues(
-        self,
-        user_id: str,
-        date: str | None = None,
+        self, user_id: str, date: str | None = None,
     ) -> list[L1MemoryItem]:
         """获取用户 L1 对话。
 
@@ -256,16 +251,16 @@ class MemoryStorage:
         """
         items = self._load_all_l1(user_id)
         if date:
-            items = [i for i in items if _ts_to_date(i.timestamp) == date]
+            items = [
+                i for i in items
+                if _ts_to_date(i.timestamp) == date
+            ]
         return items
 
     def update_l1_dialogue_timestamp(
-        self,
-        user_id: str,
-        message_id: str,
-        timestamp: float,
+        self, user_id: str, message_id: str, timestamp: float,
     ) -> bool:
-        """更新单条 L1 对话的时间戳（测试工具）。"""
+        """更新单条 L1 对话的时间戳（供测试用）。"""
         path = self._get_l1_path(user_id)
         data = self._load_json(path)
         for item in data:
@@ -279,6 +274,10 @@ class MemoryStorage:
         path = self._get_l1_path(user_id)
         return [L1MemoryItem.from_dict(d) for d in self._load_json(path)]
 
+    # ==================================================================
+    # L1 轮次操作
+    # ==================================================================
+
     def get_recent_rounds(
         self,
         user_id: str,
@@ -286,17 +285,16 @@ class MemoryStorage:
     ) -> list[dict[str, str]]:
         """获取最近 N 轮 L1 对话，按日期分组。
 
-        1 轮 = 1 条 user + 1 条 assistant。按时间倒序取最近 N 轮，
-        然后按日期正序分组返回，每天插入日期标记。
+        1 轮 = 1 条 user + 1 条 assistant。按时间正序排列，
+        日期变更处插入 {"role": "system", "content": "[YYYY-MM-DD 对话]"}。
 
         Args:
             user_id: 用户标识符。
             max_rounds: 最大轮数，为 None 使用 config.l1_inject_rounds。
+                        max_rounds=0 时返回空列表。
 
         Returns:
             list[dict]，每个 dict 有 role/content 键。
-            日期变更处插入 {"role": "system", "content": "[YYYY-MM-DD 对话]"}。
-            max_rounds=0 时返回空列表。
         """
         if max_rounds is None:
             max_rounds = self._config.l1_inject_rounds
@@ -307,10 +305,9 @@ class MemoryStorage:
         if not items:
             return []
 
-        # 按时间正序排列（最早在前）
         items.sort(key=lambda i: i.timestamp)
 
-        # 配对：尝试将 user 和 assistant 配对为一轮
+        # 配对：user + assistant 为一轮
         rounds: list[list[L1MemoryItem]] = []
         current_round: list[L1MemoryItem] = []
         for item in items:
@@ -322,7 +319,6 @@ class MemoryStorage:
         if current_round:
             rounds.append(current_round)
 
-        # 取最近 N 轮
         rounds = rounds[-max_rounds:]
 
         # 展平并按日期分组插入标记
@@ -337,7 +333,6 @@ class MemoryStorage:
                         {"role": "system", "content": f"[{current_date} 对话]"}
                     )
                 result.append({"role": item.role, "content": item.content})
-
         return result
 
     def trim_to_recent_rounds(
@@ -356,13 +351,18 @@ class MemoryStorage:
         """
         if keep_rounds is None:
             keep_rounds = self._config.l1_save_rounds
+        if keep_rounds <= 0:
+            path = self._get_l1_path(user_id)
+            data = self._load_json(path)
+            if data:
+                self._save_json(path, [])
+            return len(data)
 
         path = self._get_l1_path(user_id)
         data = self._load_json(path)
         if not data:
             return 0
 
-        # 按时间正序排列
         data.sort(key=lambda d: d.get("timestamp", 0))
 
         # 配对计数
@@ -377,7 +377,6 @@ class MemoryStorage:
         if current_round:
             rounds.append(current_round)
 
-        # 保留最后 N 轮
         kept_rounds = rounds[-keep_rounds:]
         kept_items = [item for rnd in kept_rounds for item in rnd]
         removed = len(data) - len(kept_items)
@@ -391,12 +390,8 @@ class MemoryStorage:
     # ==================================================================
 
     def add_summary(
-        self,
-        user_id: str,
-        date: str,
-        summary: str,
-        importance: int,
-        hidden: bool = False,
+        self, user_id: str, date: str, summary: str,
+        importance: int, hidden: bool = False,
     ) -> L2SummaryItem:
         """添加/覆盖指定日期的 L2 摘要。
 
@@ -428,10 +423,7 @@ class MemoryStorage:
         return item
 
     def get_daily_summaries(
-        self,
-        user_id: str,
-        *,
-        last: int | None = None,
+        self, user_id: str, *, last: int | None = None,
     ) -> list[L2SummaryItem]:
         """获取用户 L2 日摘要。
 
@@ -448,10 +440,19 @@ class MemoryStorage:
             items = items[:last]
         return items
 
+    def get_l2_summaries_for_date(
+        self, date: str,
+    ) -> list[L2SummaryItem]:
+        """按日期查询 L2 摘要（跨用户，用于调度器遍历）。"""
+        results: list[L2SummaryItem] = []
+        for f in self._l2_dir.glob("*.json"):
+            for d in self._load_json(f):
+                if d.get("date") == date:
+                    results.append(L2SummaryItem.from_dict(d))
+        return results
+
     def delete_old_summaries(
-        self,
-        user_id: str,
-        ttl: int | None = None,
+        self, user_id: str, ttl: int | None = None,
     ) -> int:
         """删除超过 TTL 天的 L2 摘要。
 
@@ -498,10 +499,7 @@ class MemoryStorage:
         return data[0] if isinstance(data, list) else data
 
     def set_weekly_summary(
-        self,
-        user_id: str,
-        summary: str,
-        week_start: str,
+        self, user_id: str, summary: str, week_start: str,
     ) -> None:
         """写入/覆盖用户周摘要。
 
@@ -535,9 +533,7 @@ class MemoryStorage:
     # ==================================================================
 
     def add_l3_memory(
-        self,
-        user_id: str,
-        content: str,
+        self, user_id: str, content: str,
         metadata: dict[str, Any] | None = None,
     ) -> str:
         """添加 L3 记忆。
@@ -563,6 +559,17 @@ class MemoryStorage:
         """获取用户全部 L3 记忆元数据。"""
         path = self._get_l3_path(user_id)
         return [L3MemoryItem.from_dict(d) for d in self._load_json(path)]
+
+    def delete_l3_memory(self, user_id: str, memory_id: str) -> bool:
+        """按 memory_id 删除 L3 记忆。"""
+        path = self._get_l3_path(user_id)
+        data = self._load_json(path)
+        original_len = len(data)
+        data = [d for d in data if d.get("memory_id") != memory_id]
+        if len(data) < original_len:
+            self._save_json(path, data)
+            return True
+        return False
 
     # ==================================================================
     # 工具

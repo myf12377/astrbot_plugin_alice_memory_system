@@ -7,12 +7,10 @@ Path B（每日磁盘摘要）：指定日期 L1 对话 → 提取式日摘要�
 
 from __future__ import annotations
 
-import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
-from zoneinfo import ZoneInfo
 
-from astrbot.api import logger
+from ..utils import parse_score
 
 if TYPE_CHECKING:
     from memory.plugin_config import PluginConfig
@@ -26,10 +24,7 @@ class DialogueCompressor:
     """
 
     def __init__(
-        self,
-        context: Any,
-        storage: MemoryStorage,
-        config: PluginConfig,
+        self, context: Any, storage: MemoryStorage, config: PluginConfig,
     ) -> None:
         """初始化压缩器。
 
@@ -47,11 +42,7 @@ class DialogueCompressor:
     # ==================================================================
 
     async def compress_day(
-        self,
-        user_id: str,
-        date: str,
-        hidden: bool = False,
-        umo: str = "",
+        self, user_id: str, date: str, hidden: bool | None = None, umo: str = "",
     ) -> str | None:
         """将用户某一天的对话压缩为 L2 日摘要。
 
@@ -69,12 +60,12 @@ class DialogueCompressor:
             return None
 
         content = self._format_dialogues(dialogues)
+        if hidden is None:
+            hidden = self._config.l2_summary_hidden
+
         summary = await self._generate_summary(content, path="b", umo=umo)
-        if not summary:
-            return None
         importance = await self._estimate_importance(summary, umo=umo)
 
-        # 修复：user_id 作为第一参数
         self._storage.add_summary(user_id, date, summary, importance, hidden=hidden)
         return summary
 
@@ -83,9 +74,7 @@ class DialogueCompressor:
     # ==================================================================
 
     async def compress_context_summary(
-        self,
-        user_id: str,
-        umo: str = "",
+        self, user_id: str, umo: str = "",
     ) -> str | None:
         """生成渐进周摘要（合并模式）。
 
@@ -97,65 +86,34 @@ class DialogueCompressor:
         weekly = self._storage.get_weekly_summary(user_id)
         weekly_text = weekly["summary"] if weekly else "（暂无）"
 
-        cst = ZoneInfo("Asia/Shanghai")
-        today = datetime.now(cst).strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         today_dialogues = self._storage.get_l1_dialogues(user_id, date=today)
-        today_text = (
-            self._format_dialogues([f"{d.role}: {d.content}" for d in today_dialogues])
-            if today_dialogues
-            else "（今日暂无对话）"
-        )
+        today_text = self._format_dialogues(
+            [f"{d.role}: {d.content}" for d in today_dialogues]
+        ) if today_dialogues else "（今日暂无对话）"
 
         daily_summaries = self._storage.get_daily_summaries(
             user_id,
             last=self._config.l2_daily_inject_count,
         )
-        # 仅保留本周的日摘要，避免上周残留数据污染周摘要
-        today_date = datetime.now(cst).date()
-        week_start = today_date - timedelta(days=today_date.weekday())
-        week_start_str = week_start.strftime("%Y-%m-%d")
-        daily_summaries = [s for s in daily_summaries if s.date >= week_start_str]
-        daily_text = (
-            "\n".join(s.date + ": " + s.summary for s in daily_summaries)
-            if daily_summaries
-            else "（暂无日摘要）"
-        )
+        daily_text = "\n".join(s.date + ": " + s.summary for s in daily_summaries) \
+            if daily_summaries else "（暂无日摘要）"
 
         # 如果没有任何实质内容，跳过
         if not today_dialogues and not daily_summaries and weekly is None:
             return None
 
-        template_a = self._config.l2_compress_prompt_a
-        if "{weekly_summary}" in template_a:
-            prompt = template_a.format(
-                weekly_summary=weekly_text,
-                today_dialogues=today_text,
-                daily_summaries=daily_text,
-            )
-        else:
-            prompt = (
-                template_a
-                + "\n\n已有周摘要：\n"
-                + weekly_text
-                + "\n\n今日对话：\n"
-                + today_dialogues
-                + "\n\n近日摘要：\n"
-                + daily_summaries
-                + "\n\n请输出合并后的完整周摘要："
-            )
+        prompt = self._config.l2_compress_prompt_a.format(
+            weekly_summary=weekly_text,
+            today_dialogues=today_text,
+            daily_summaries=daily_text,
+        )
         summary = await self._call_llm(prompt, umo)
         summary = summary.strip()
-        if not summary:
-            if weekly:
-                logger.warning("[AliceMemory] Path A LLM 失败，保留上周摘要")
-                return weekly["summary"]
-            return None
-        today_date = datetime.now(cst).date()
+        today_date = datetime.now(timezone.utc).date()
         week_start = today_date - timedelta(days=today_date.weekday())
         self._storage.set_weekly_summary(
-            user_id,
-            summary,
-            week_start.strftime("%Y-%m-%d"),
+            user_id, summary, week_start.strftime("%Y-%m-%d"),
         )
         return summary
 
@@ -164,8 +122,7 @@ class DialogueCompressor:
     # ==================================================================
 
     def _get_dialogues(self, user_id: str, date: str) -> list[str]:
-        cst = ZoneInfo("Asia/Shanghai")
-        start_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=cst)
+        start_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         end_date = start_date + timedelta(days=1)
         start_ts = start_date.timestamp()
         end_ts = end_date.timestamp()
@@ -179,11 +136,7 @@ class DialogueCompressor:
         return "\n".join(dialogues)
 
     async def _generate_summary(
-        self,
-        content: str,
-        *,
-        path: str = "b",
-        umo: str = "",
+        self, content: str, *, path: str = "b", umo: str = "",
     ) -> str:
         """调用 LLM 生成摘要。
 
@@ -193,14 +146,10 @@ class DialogueCompressor:
             umo: unified_message_origin，用于获取当前会话的 provider ID。
         """
         template = (
-            self._config.l2_compress_prompt_a
-            if path == "a"
+            self._config.l2_compress_prompt_a if path == "a"
             else self._config.l2_compress_prompt_b
         )
-        if "{content}" in template:
-            prompt = template.format(content=content)
-        else:
-            prompt = template + "\n\n对话内容：\n" + content + "\n\n日摘要："
+        prompt = template.format(content=content)
         return (await self._call_llm(prompt, umo)).strip()
 
     async def _estimate_importance(self, summary: str, umo: str = "") -> int:
@@ -211,7 +160,7 @@ class DialogueCompressor:
             "请只输出一个0-10的数字分数，不要有其他文字。"
         )
         response = await self._call_llm(prompt, umo, raw=True)
-        return self._parse_score(response)
+        return parse_score(response, default=5)
 
     async def _call_llm(self, prompt: str, umo: str = "", raw: bool = False) -> str:
         kwargs: dict[str, Any] = {
@@ -236,21 +185,14 @@ class DialogueCompressor:
                 pass
         try:
             resp = await self._context.llm_generate(prompt=prompt, **kwargs)
-        except Exception as e:
+        except Exception:
             if "model" in kwargs:
-                logger.warning(
-                    f"[AliceMemory] 模型 {kwargs['model']} 调用失败，"
-                    f"降级使用 provider 默认模型 | {e}"
-                )
                 del kwargs["model"]
                 resp = await self._context.llm_generate(prompt=prompt, **kwargs)
             else:
                 raise
         text = getattr(resp, "completion_text", "") or ""
         if not raw and not self._looks_valid(text.strip()):
-            logger.warning(
-                "[AliceMemory] Compressor LLM 返回异常内容 | resp=%s...", text[:60]
-            )
             return ""
         return text.strip()
 
@@ -265,10 +207,3 @@ class DialogueCompressor:
                 return False
         return True
 
-    @staticmethod
-    def _parse_score(response: str) -> int:
-        cleaned = response.strip()
-        match = re.search(r"-?\d+", cleaned)
-        if match:
-            return max(0, min(10, int(match.group())))
-        return 5

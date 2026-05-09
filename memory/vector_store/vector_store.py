@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
+from astrbot.api import logger
+
 if TYPE_CHECKING:
     from memory.plugin_config import PluginConfig
 
@@ -57,20 +59,25 @@ class VectorStore:
             name=self._collection_name,
             metadata={"description": "AstrBot L3 memory storage"},
         )
+        # 异步调度索引重建（不阻塞启动）
+        if self._embedding_func is not None:
+            try:
+                loop = asyncio.get_event_loop()
+                loop.create_task(self._maybe_reindex())
+            except RuntimeError:
+                pass
 
     # ------------------------------------------------------------------
     # embedding 工具
     # ------------------------------------------------------------------
 
     async def _call_embedding_func_async(
-        self,
-        texts: list[str],
+        self, texts: list[str],
     ) -> list[list[float]]:
         """调用 embedding 函数（兼容同步/异步）。"""
         if self._embedding_func is None:
             return []
         import inspect
-
         if inspect.iscoroutinefunction(self._embedding_func):
             return await self._embedding_func(texts)
         loop = asyncio.get_event_loop()
@@ -86,13 +93,60 @@ class VectorStore:
         return True
 
     # ==================================================================
+    # 索引重建
+    # ==================================================================
+
+    async def _maybe_reindex(self) -> None:
+        """检测 embedding 维度变化，必要时自动重建索引。"""
+        if not self._embedding_func:
+            return
+        try:
+            existing = self._collection.get(limit=1, include=["embeddings"])
+            if not existing["embeddings"] or not existing["embeddings"][0]:
+                return
+
+            old_dim = len(existing["embeddings"][0])
+            test_vec = await self._call_embedding_func_async(["dimension_test"])
+            if not test_vec:
+                return
+            new_dim = len(test_vec[0])
+
+            if old_dim == new_dim:
+                return
+
+            logger.info(
+                "[AliceMemory] Embedding 变化 | %d→%d 维 | 重建 L3 索引...",
+                old_dim, new_dim,
+            )
+
+            all_data = self._collection.get(include=["documents", "metadatas"])
+            if not all_data["ids"]:
+                return
+
+            batch_size = 50
+            for i in range(0, len(all_data["ids"]), batch_size):
+                batch_ids = all_data["ids"][i : i + batch_size]
+                batch_docs = all_data["documents"][i : i + batch_size]
+                batch_meta = all_data["metadatas"][i : i + batch_size]
+                new_vecs = await self._call_embedding_func_async(batch_docs)
+                self._collection.update(
+                    ids=batch_ids,
+                    embeddings=new_vecs,
+                    metadatas=batch_meta,
+                )
+
+            logger.info(
+                "[AliceMemory] L3 索引重建完成 | 条目=%d", len(all_data["ids"])
+            )
+        except Exception:
+            logger.error("[AliceMemory] L3 索引重建失败", exc_info=True)
+
+    # ==================================================================
     # CRUD
     # ==================================================================
 
     async def add_memory(
-        self,
-        user_id: str,
-        content: str,
+        self, user_id: str, content: str,
         metadata: dict[str, Any] | None = None,
     ) -> str:
         """添加记忆到向量存储。
@@ -131,10 +185,7 @@ class VectorStore:
         return vector_id
 
     async def search(
-        self,
-        user_id: str,
-        query: str,
-        top_k: int = 5,
+        self, user_id: str, query: str, top_k: int = 5,
     ) -> list[dict[str, Any]]:
         """语义搜索用户记忆（同时更新访问计数）。
 
@@ -174,18 +225,12 @@ class VectorStore:
                 ids_to_update.append(vid)
                 new_metadatas.append(meta)
 
-                memories.append(
-                    {
-                        "id": vid,
-                        "content": results["documents"][0][i]
-                        if results["documents"]
-                        else "",
-                        "metadata": meta,
-                        "distance": results["distances"][0][i]
-                        if results["distances"]
-                        else 0.0,
-                    }
-                )
+                memories.append({
+                    "id": vid,
+                    "content": results["documents"][0][i] if results["documents"] else "",
+                    "metadata": meta,
+                    "distance": results["distances"][0][i] if results["distances"] else 0.0,
+                })
 
             # 批量更新访问信息
             if ids_to_update:
@@ -214,18 +259,22 @@ class VectorStore:
         memories: list[dict[str, Any]] = []
         if results["ids"]:
             for i, vid in enumerate(results["ids"]):
-                memories.append(
-                    {
-                        "id": vid,
-                        "content": results["documents"][i]
-                        if results["documents"]
-                        else "",
-                        "metadata": results["metadatas"][i]
-                        if results["metadatas"]
-                        else {},
-                    }
-                )
+                memories.append({
+                    "id": vid,
+                    "content": results["documents"][i] if results["documents"] else "",
+                    "metadata": results["metadatas"][i] if results["metadatas"] else {},
+                })
         return memories
+
+    def delete_user_memories(self, user_id: str) -> int:
+        """删除用户全部记忆。返回删除数。"""
+        if not self._ensure_collection():
+            return 0
+        memories = self.get_user_memories(user_id)
+        count = len(memories)
+        if count > 0:
+            self._collection.delete(where={"user_id": user_id})
+        return count
 
     def update_metadata(self, vector_id: str, metadata: dict[str, Any]) -> bool:
         """更新记忆元数据（合并到现有元数据）。"""
@@ -293,9 +342,8 @@ class VectorStore:
             except (ValueError, TypeError):
                 days = 0
 
-            effective = (
-                importance * (decay_rate**days) + min(access_count, 10) * access_bonus
-            )
+            effective = (importance * (decay_rate ** days)
+                         + min(access_count, 10) * access_bonus)
 
             if effective < delete_threshold:
                 to_delete.append(m["id"])
@@ -348,42 +396,30 @@ class VectorStore:
     # 相似度 & 合并
     # ==================================================================
 
-    async def find_similar_by_content(
-        self,
-        user_id: str,
-        content: str,
-        threshold: float,
-        top_k: int = 20,
+    def find_similar(
+        self, user_id: str, embedding: list[float], threshold: float,
     ) -> list[dict[str, Any]]:
-        """按内容文本查找相似记忆。
+        """查找与给定向量相似的用户记忆。
 
         Args:
             user_id: 用户标识符。
-            content: 查询内容文本。
+            embedding: 查询向量。
             threshold: 余弦相似度阈值（如 0.9）。
-            top_k: 最多返回条数。
 
         Returns:
-            相似度 >= threshold 的记忆列表（按相似度降序）。
+            相似度 ≥ threshold 的记忆列表（按相似度降序）。
         """
         if not self._ensure_collection():
             return []
-        if not content:
+        if not embedding:
             return []
-
-        query_vector: list[float] | None = None
-        if self._embedding_func:
-            vectors = await self._call_embedding_func_async([content])
-            query_vector = vectors[0] if vectors else None
-
         total = self._collection.count()
         if total == 0:
             return []
 
         results = self._collection.query(
-            query_texts=[content] if query_vector is None else None,
-            query_embeddings=[query_vector] if query_vector else None,
-            n_results=min(top_k, total),
+            query_embeddings=[embedding],
+            n_results=min(20, total),
             where={"user_id": user_id},
         )
 
@@ -391,30 +427,21 @@ class VectorStore:
         if results["ids"] and results["ids"][0]:
             for i, vid in enumerate(results["ids"][0]):
                 distance = results["distances"][0][i] if results["distances"] else 1.0
+                # ChromaDB cosine: distance = 1 - similarity
                 similarity = 1.0 - distance
                 if similarity >= threshold:
-                    similar.append(
-                        {
-                            "id": vid,
-                            "content": results["documents"][0][i]
-                            if results["documents"]
-                            else "",
-                            "metadata": results["metadatas"][0][i]
-                            if results["metadatas"]
-                            else {},
-                            "similarity": round(similarity, 4),
-                        }
-                    )
+                    similar.append({
+                        "id": vid,
+                        "content": results["documents"][0][i] if results["documents"] else "",
+                        "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
+                        "similarity": round(similarity, 4),
+                    })
 
         similar.sort(key=lambda x: x["similarity"], reverse=True)
         return similar
 
     async def merge_memories(
-        self,
-        vid1: str,
-        vid2: str,
-        merged_content: str,
-        new_score: float,
+        self, vid1: str, vid2: str, merged_content: str, new_score: float,
     ) -> str:
         """合并两条记忆：删旧建新。
 
@@ -468,6 +495,19 @@ class VectorStore:
     # ==================================================================
     # 工具
     # ==================================================================
+
+    def get_all_users(self) -> list[str]:
+        """获取所有在 ChromaDB 中有数据的用户 ID（去重排序）。"""
+        if not self._ensure_collection():
+            return []
+        results = self._collection.get()
+        users: set[str] = set()
+        if results["metadatas"]:
+            for meta in results["metadatas"]:
+                uid = meta.get("user_id", "")
+                if uid:
+                    users.add(uid)
+        return sorted(users)
 
     def close(self) -> None:
         """关闭向量存储连接。"""

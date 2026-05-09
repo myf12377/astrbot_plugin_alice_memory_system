@@ -11,17 +11,10 @@
     "default": true,
     "hint": "关闭后不注入记忆、不存储对话。紧急禁用时使用。"
   },
-
   "l1_enabled": {
     "type": "bool",
     "description": "L1 存储开关",
     "default": true
-  },
-  "l1_retention_days": {
-    "type": "int",
-    "description": "L1 磁盘保留天数",
-    "default": 7,
-    "hint": "范围 1-30。为 Path B 压缩提供原料窗口。"
   },
   "l1_save_rounds": {
     "type": "int",
@@ -35,13 +28,6 @@
     "default": 80,
     "hint": "范围 0-200。0=不注入L1，仅用L2+L3。不能超过 l1_save_rounds。"
   },
-  "l1_search_limit": {
-    "type": "int",
-    "description": "注入上下文的 L1 对话最大条数（旧字段，保留兼容）",
-    "default": 10,
-    "hint": "范围 1-50"
-  },
-
   "l2_path_a_enabled": {
     "type": "bool",
     "description": "Path A（渐进周摘要）开关",
@@ -50,10 +36,9 @@
   "l2_compress_prompt_a": {
     "type": "text",
     "description": "Path A 压缩 prompt 模板",
-    "default": "你是一个记忆合并助手。以下包含：\n1) 已有的本周摘要（可能为空）\n2) 今日的对话记录\n3) 近几日的每日摘要\n\n请将以上内容融合为一份本周的最新摘要。要求：\n- 保留所有重要的事件、决定、偏好信息\n- 去除重复内容\n- 对本周整体情况给出概括描述\n- 保持客观、第三人称叙述\n\n已有周摘要：\n{weekly_summary}\n\n今日对话：\n{today_dialogues}\n\n近日摘要：\n{daily_summaries}\n\n请输出合并后的完整周摘要：",
+    "default": "你是一个记忆合并助手。以下包含：\n1) 已有的本周摘要（可能为空）\n2) 今日的对话记录\n3) 近几日的每日摘要\n\n请将以上内容融合为一份本周的最新摘要。",
     "hint": "占位符：{weekly_summary}、{today_dialogues}、{daily_summaries}"
   },
-
   "l2_path_b_enabled": {
     "type": "bool",
     "description": "Path B（每日磁盘摘要）开关",
@@ -62,7 +47,7 @@
   "l2_compress_prompt_b": {
     "type": "text",
     "description": "Path B 压缩 prompt 模板",
-    "default": "你是一个对话摘要助手。请将以下昨日对话提炼为一份日摘要。\n\n要求：\n- 提取关键事件和重要信息\n- 保留用户的偏好、习惯、情感表达方式\n- 保留助手给出的重要建议或结论\n- 用简洁的第三人称叙述\n- 包含用户情绪基调（如：开心/焦虑/平静）\n\n对话内容：\n{content}\n\n日摘要：",
+    "default": "你是一个对话摘要助手。请将以下昨日对话提炼为一份日摘要。",
     "hint": "占位符：{content}。建议保留「偏好」「情感基调」「表达习惯」等关键词。"
   },
   "l2_ttl": {
@@ -74,14 +59,25 @@
   "l2_daily_inject_count": {
     "type": "int",
     "description": "注入上下文的日摘要天数",
-    "default": 7,
+    "default": 3,
     "hint": "范围 0-14。注入最近 N 天的日摘要到上下文。0=不注入。"
+  },
+  "l2_summary_hidden": {
+    "type": "bool",
+    "description": "摘要默认隐藏",
+    "default": false,
+    "hint": "开启后压缩产生的摘要不会注入到前端对话"
   },
   "manual_compress_feedback_mode": {
     "type": "string",
     "description": "手动压缩反馈模式",
     "default": "llm",
-    "options": ["silent", "fixed", "llm", "visible"],
+    "options": [
+      "silent",
+      "fixed",
+      "llm",
+      "visible"
+    ],
     "hint": "silent=不反馈 / fixed=固定文本 / llm=AI动态生成 / visible=显示摘要预览"
   },
   "manual_compress_feedback_text": {
@@ -94,11 +90,20 @@
     "description": "反馈模式为 llm 时的动态 prompt",
     "default": "今日对话已完成存档。请根据今日对话的情绪氛围，以自然、人类化的方式告知用户。"
   },
-
   "l3_enabled": {
     "type": "bool",
     "description": "L3 向量记忆开关",
     "default": true
+  },
+  "l3_embedding_provider": {
+    "type": "string",
+    "description": "向量嵌入模型",
+    "default": "chroma",
+    "options": [
+      "auto",
+      "chroma"
+    ],
+    "hint": "chroma=ChromaDB 内置模型(默认) / auto=使用 AstrBot 已配置的 EmbeddingProvider。切换后自动重建索引，旧数据无损。"
   },
   "importance_threshold": {
     "type": "int",
@@ -108,15 +113,15 @@
   },
   "l3_merge_similarity": {
     "type": "float",
-    "description": "L3 注入检索相似度过滤阈值",
+    "description": "向量相似度合并阈值",
     "default": 0.9,
-    "hint": "范围 0.0-1.0。L3 注入检索时，相似度 ≥ 此值才注入上下文。也用于月度合并判定。0.85-0.95 推荐。"
+    "hint": "范围 0.0-1.0。两条记忆相似度 ≥ 此值触发 LLM 合并。0.85-0.95 推荐。"
   },
   "l3_merge_interval_days": {
     "type": "int",
     "description": "全量合并周期（天）",
     "default": 30,
-    "hint": "范围 1-365。Scheduler 每月 1 日 06:00 执行全量 pairwise 相似度扫描归并。"
+    "hint": "范围 1-365。多久执行一次全量 pairwise 相似度扫描兜底合并。"
   },
   "l3_decay_rate": {
     "type": "float",
@@ -142,7 +147,6 @@
     "default": 5.0,
     "hint": "范围 3.0-10.0。effective_score 在 (delete_threshold, gray_zone_upper] 触发 LLM 重评。"
   },
-
   "compress_model": {
     "type": "string",
     "description": "压缩用的 LLM 模型",
@@ -167,7 +171,6 @@
     "default": 0.7,
     "hint": "范围 0.0-2.0。摘要任务建议 0.5-0.7。"
   },
-
   "inject_l1": {
     "type": "bool",
     "description": "L1 上下文注入开关",
@@ -187,11 +190,5 @@
     "type": "bool",
     "description": "L3 记忆注入开关",
     "default": true
-  },
-  "manage_context": {
-    "type": "bool",
-    "description": "由插件管理上下文（清空 AstrBot 历史，使用 L1/L2/L3 注入）",
-    "default": false,
-    "hint": "开启后 AstrBot 的对话历史不送入 LLM，由插件的三层记忆替代。可大幅减少 token 消耗。"
   }
 }

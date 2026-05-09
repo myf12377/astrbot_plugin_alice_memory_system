@@ -18,6 +18,9 @@ def __init__(self, context: Any, config: PluginConfig) -> None
 async def analyze(self, content: str, umo: str = "") -> int: ...
 """单条分析，返回 0-10 分数。"""
 
+def should_promote_to_l3(self, content: str) -> bool: ...
+"""分数 ≥ importance_threshold → True。"""
+
 async def batch_recheck(self, memories: list[dict], umo: str = "") -> list[dict]: ...
 """灰区批量重评。
 输入: [{content, metadata, ...}, ...]
@@ -28,8 +31,6 @@ async def merge_content(self, c1: str, c2: str, umo: str = "") -> str: ...
 ```
 
 内部：`_build_prompt`, `_build_batch_prompt`, `_build_merge_prompt`, `_parse_score`。
-
-`_call_llm(prompt, umo)`：LLM 调用核心。model 不兼容时自动降级去掉 `model` 参数重试。
 
 ## 边界
 

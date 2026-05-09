@@ -25,7 +25,7 @@ class TestMemoryStorage:
     @pytest.fixture
     def config(self, temp_dir: Path) -> PluginConfig:
         """创建测试用 PluginConfig，数据写入临时目录。"""
-        return PluginConfig(data_dir=temp_dir, l1_retention_days=3, l2_ttl=7)
+        return PluginConfig(data_dir=temp_dir, l1_save_rounds=200, l1_inject_rounds=80, l2_ttl=7)
 
     @pytest.fixture
     def storage(self, config: PluginConfig) -> MemoryStorage:
@@ -46,6 +46,28 @@ class TestMemoryStorage:
         storage.append_dialogue("user1", "assistant", "Hi")
         dialogues = storage.get_l1_dialogues("user1")
         assert len(dialogues) == 2
+
+    def test_get_recent_rounds(self, storage: MemoryStorage) -> None:
+        """get_recent_rounds 返回最近 N 轮对话。"""
+        storage.append_dialogue("user1", "user", "Hello")
+        storage.append_dialogue("user1", "assistant", "Hi")
+        rounds = storage.get_recent_rounds("user1")
+        # 有 1 轮（user+assistant） + 可能含日期标记
+        user_msgs = [m for m in rounds if m.get("role") == "user"]
+        assert len(user_msgs) >= 1
+
+    def test_trim_to_recent_rounds(self, storage: MemoryStorage) -> None:
+        """trim_to_recent_rounds 裁剪超出轮次的数据。"""
+        storage.append_dialogue("user1", "user", "Q1")
+        storage.append_dialogue("user1", "assistant", "A1")
+        storage.append_dialogue("user1", "user", "Q2")
+        storage.append_dialogue("user1", "assistant", "A2")
+        # keep_rounds=1: 只保留最后 1 轮，应删除第 1 轮的 2 条
+        removed = storage.trim_to_recent_rounds("user1", keep_rounds=1)
+        assert removed == 2
+        remaining = storage.get_l1_dialogues("user1")
+        assert len(remaining) == 2
+        assert remaining[0].content == "Q2"
 
     # L2 Path B — 每日摘要
     # ================================================================
@@ -123,3 +145,28 @@ class TestMemoryStorage:
         storage.add_l3_memory("user1", "Memory 2")
         assert len(storage.get_l3_memories("user1")) == 2
 
+    def test_delete_l3_memory(self, storage: MemoryStorage) -> None:
+        memory_id = storage.add_l3_memory("user1", "Important")
+        result = storage.delete_l3_memory("user1", memory_id)
+        assert result is True
+        assert len(storage.get_l3_memories("user1")) == 0
+
+    # Session
+    # ================================================================
+
+    def test_get_recent_rounds_pairs(self, storage: MemoryStorage) -> None:
+        """多轮对话应正确配对。"""
+        storage.append_dialogue("user1", "user", "Q1")
+        storage.append_dialogue("user1", "assistant", "A1")
+        storage.append_dialogue("user1", "user", "Q2")
+        storage.append_dialogue("user1", "assistant", "A2")
+        rounds = storage.get_recent_rounds("user1")
+        # 应有 2 轮 + 日期标记(system)
+        assert len(rounds) >= 4
+
+    def test_get_all_users(self, storage: MemoryStorage) -> None:
+        storage.append_dialogue("user1", "user", "Hi")
+        storage.append_dialogue("user2", "user", "Hey")
+        users = storage.get_all_users()
+        assert "user1" in users
+        assert "user2" in users

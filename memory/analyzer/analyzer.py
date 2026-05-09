@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-from astrbot.api import logger
+from ..utils import parse_score
 
 if TYPE_CHECKING:
     from memory.plugin_config import PluginConfig
@@ -43,16 +43,19 @@ class ImportanceAnalyzer:
         """
         prompt = self._build_analyze_prompt(content)
         response = await self._call_llm(prompt, umo)
-        return self._parse_score(response)
+        return parse_score(response, default=0)
+
+    async def should_promote_to_l3(self, content: str) -> bool:
+        """分数 ≥ importance_threshold → True。"""
+        score = await self.analyze(content)
+        return score >= self._config.importance_threshold
 
     # ==================================================================
     # 灰区批量重评
     # ==================================================================
 
     async def batch_recheck(
-        self,
-        memories: list[dict[str, Any]],
-        umo: str = "",
+        self, memories: list[dict[str, Any]], umo: str = "",
     ) -> list[dict[str, Any]]:
         """对灰区记忆批量 LLM 重评。
 
@@ -70,7 +73,7 @@ class ImportanceAnalyzer:
         # 每批最多 5 条
         batch_size = 5
         for i in range(0, len(memories), batch_size):
-            batch = memories[i : i + batch_size]
+            batch = memories[i:i + batch_size]
             prompt = self._build_batch_prompt(batch)
             response = await self._call_llm(prompt, umo)
             batch_results = self._parse_batch_response(response, batch)
@@ -83,10 +86,7 @@ class ImportanceAnalyzer:
     # ==================================================================
 
     async def merge_content(
-        self,
-        content_1: str,
-        content_2: str,
-        umo: str = "",
+        self, content_1: str, content_2: str, umo: str = "",
     ) -> str:
         """LLM 合并两条相似记忆，去冗余保留关键信息。
 
@@ -124,12 +124,8 @@ class ImportanceAnalyzer:
                 pass
         try:
             resp = await self._context.llm_generate(prompt=prompt, **kwargs)
-        except Exception as e:
+        except Exception:
             if "model" in kwargs:
-                logger.warning(
-                    f"[AliceMemory] 模型 {kwargs['model']} 调用失败，"
-                    f"降级使用 provider 默认模型 | {e}"
-                )
                 del kwargs["model"]
                 resp = await self._context.llm_generate(prompt=prompt, **kwargs)
             else:
@@ -158,7 +154,7 @@ class ImportanceAnalyzer:
             items.append(f"[{i}] effective_score={score} | {content}")
         items_text = "\n".join(items)
         return (
-            '以下是一些处于"灰区"的记忆（分数偏低，面临淘汰）。\n'
+            "以下是一些处于\"灰区\"的记忆（分数偏低，面临淘汰）。\n"
             "请重新评估每条记忆的重要性，给出新的分数（0-10），"
             "并判断是否应保留（keep）或删除（drop）。\n\n"
             f"{items_text}\n\n"
@@ -182,34 +178,21 @@ class ImportanceAnalyzer:
     # ==================================================================
 
     @staticmethod
-    def _parse_score(response: str) -> int:
-        cleaned = response.strip()
-        match = re.search(r"-?\d+", cleaned)
-        if match:
-            return max(0, min(10, int(match.group())))
-        return 0
-
-    @staticmethod
     def _parse_batch_response(
-        response: str,
-        batch: list[dict[str, Any]],
+        response: str, batch: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         lines = response.strip().split("\n")
         for line in lines:
-            match = re.match(
-                r"\[(\d+)\]\s+(\d+)\s+(keep|drop)", line.strip(), re.IGNORECASE
-            )
+            match = re.match(r"\[(\d+)\]\s+(\d+)\s+(keep|drop)", line.strip(), re.IGNORECASE)
             if match:
                 idx = int(match.group(1))
                 new_score = int(match.group(2))
                 should_keep = match.group(3).lower() == "keep"
                 if idx < len(batch):
-                    results.append(
-                        {
-                            "vector_id": batch[idx].get("id", ""),
-                            "new_score": max(0, min(10, new_score)),
-                            "should_keep": should_keep,
-                        }
-                    )
+                    results.append({
+                        "vector_id": batch[idx].get("id", ""),
+                        "new_score": max(0, min(10, new_score)),
+                        "should_keep": should_keep,
+                    })
         return results

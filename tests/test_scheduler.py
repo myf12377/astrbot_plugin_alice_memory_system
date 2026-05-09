@@ -29,7 +29,7 @@ class TestScheduler:
     def config(self, temp_dir: Path) -> PluginConfig:
         return PluginConfig(
             data_dir=temp_dir,
-            l1_retention_days=3,
+            l1_save_rounds=200, l1_inject_rounds=80,
             l2_ttl=7,
             l3_merge_interval_days=30,
             l2_path_a_enabled=True,
@@ -42,9 +42,7 @@ class TestScheduler:
     def mock_context(self) -> MagicMock:
         context = MagicMock()
         context.cron_manager = MagicMock()
-        context.cron_manager.add_basic_job = AsyncMock()
-        context.cron_manager.list_jobs = AsyncMock(return_value=[])
-        context.cron_manager.delete_job = AsyncMock()
+        context.cron_manager.add_basic_job = MagicMock()
         return context
 
     @pytest.fixture
@@ -70,66 +68,38 @@ class TestScheduler:
 
     @pytest.fixture
     def scheduler(
-        self,
-        mock_context,
-        storage,
-        identity_module,
-        config,
-        mock_compressor,
-        mock_analyzer,
+        self, mock_context, storage, identity_module, config,
+        mock_compressor, mock_analyzer,
     ) -> Scheduler:
         return Scheduler(
-            mock_context,
-            storage,
-            identity_module,
-            None,
-            config,
-            mock_compressor,
-            mock_analyzer,
+            mock_context, storage, identity_module,
+            None, config, mock_compressor, mock_analyzer,
         )
 
     # 注册
     # ================================================================
 
-    @pytest.mark.asyncio
-    async def test_start_registers_6_tasks(
-        self,
-        scheduler: Scheduler,
-        mock_context: MagicMock,
+    def test_start_registers_6_tasks(
+        self, scheduler: Scheduler, mock_context: MagicMock,
     ) -> None:
-        await scheduler.start()
+        scheduler.start()
         assert mock_context.cron_manager.add_basic_job.call_count == 6
 
-    @pytest.mark.asyncio
-    async def test_start_no_cron_manager(
-        self,
-        storage,
-        identity_module,
-        config,
-        mock_compressor,
-        mock_analyzer,
+    def test_start_no_cron_manager(
+        self, storage, identity_module, config, mock_compressor, mock_analyzer,
     ) -> None:
         mock_ctx = MagicMock()
         mock_ctx.cron_manager = None
-        s = Scheduler(
-            mock_ctx,
-            storage,
-            identity_module,
-            None,
-            config,
-            mock_compressor,
-            mock_analyzer,
-        )
-        await s.start()  # 静默返回，不抛异常
+        s = Scheduler(mock_ctx, storage, identity_module, None, config,
+                       mock_compressor, mock_analyzer)
+        s.start()  # 静默返回，不抛异常
 
     # Path B 日压缩
     # ================================================================
 
     @pytest.mark.asyncio
     async def test_compress_daily(
-        self,
-        scheduler: Scheduler,
-        identity_module: IdentityModule,
+        self, scheduler: Scheduler, identity_module: IdentityModule,
         mock_compressor: MagicMock,
     ) -> None:
         identity_module.register_user("test", "u1")
@@ -142,8 +112,7 @@ class TestScheduler:
 
     @pytest.mark.asyncio
     async def test_l1_cleanup(
-        self,
-        scheduler: Scheduler,
+        self, scheduler: Scheduler,
     ) -> None:
         await scheduler._l1_cleanup()  # 无数据，静默完成
 
@@ -152,58 +121,6 @@ class TestScheduler:
 
     @pytest.mark.asyncio
     async def test_l3_maintenance_no_vector_store(
-        self,
-        scheduler: Scheduler,
+        self, scheduler: Scheduler,
     ) -> None:
         await scheduler._l3_maintenance()  # 无 VectorStore，静默返回
-
-    # Path A 周压缩
-    # ================================================================
-
-    @pytest.mark.asyncio
-    async def test_compress_context_does_not_write_storage(
-        self,
-        scheduler: Scheduler,
-        identity_module: IdentityModule,
-        mock_compressor: MagicMock,
-        storage: MemoryStorage,
-    ) -> None:
-        """_compress_context 不应直接调用 storage.set_weekly_summary，
-        周摘要写入由 Compressor 内部完成。"""
-        identity_module.register_user("test", "uid1")
-        mock_compressor.compress_context_summary = AsyncMock(return_value="周摘要")
-        original_set = storage.set_weekly_summary
-        storage.set_weekly_summary = MagicMock()
-        await scheduler._compress_context()
-        storage.set_weekly_summary.assert_not_called()
-        storage.set_weekly_summary = original_set
-
-    # L3 月度合并
-    # ================================================================
-
-    @pytest.mark.asyncio
-    async def test_l3_merge_no_vector_store(
-        self,
-        scheduler: Scheduler,
-    ) -> None:
-        await scheduler._l3_merge()  # 无 VectorStore，静默返回
-
-    @pytest.mark.asyncio
-    async def test_l3_merge(
-        self,
-        scheduler: Scheduler,
-        mock_analyzer: MagicMock,
-        identity_module: IdentityModule,
-    ) -> None:
-        """有 2 条记忆但相似度不足，不应触发合并。"""
-        identity_module.register_user("test", "uid1")
-        scheduler._vector_store = MagicMock()
-        scheduler._vector_store.get_user_memories.return_value = [
-            {"id": "v1", "content": "我喜欢吃苹果", "metadata": {"importance": 8}},
-            {"id": "v2", "content": "今天天气真好", "metadata": {"importance": 3}},
-        ]
-        scheduler._vector_store.find_similar_by_content = AsyncMock(return_value=[])
-        mock_analyzer.merge_content = AsyncMock()
-        scheduler._vector_store.merge_memories = AsyncMock()
-        await scheduler._l3_merge()
-        mock_analyzer.merge_content.assert_not_called()

@@ -10,6 +10,7 @@ import pytest
 
 from memory.analyzer.analyzer import ImportanceAnalyzer
 from memory.plugin_config import PluginConfig
+from memory.utils import parse_score
 
 
 class TestImportanceAnalyzer:
@@ -29,16 +30,11 @@ class TestImportanceAnalyzer:
         context = MagicMock()
         context.llm_generate = AsyncMock()
         context.get_current_chat_provider_id = AsyncMock(return_value="test-provider")
-        default_provider = MagicMock()
-        default_provider.meta.return_value.id = "default-provider"
-        context.get_using_provider.return_value = default_provider
         return context
 
     @pytest.fixture
     def analyzer(
-        self,
-        mock_context: MagicMock,
-        config: PluginConfig,
+        self, mock_context: MagicMock, config: PluginConfig,
     ) -> ImportanceAnalyzer:
         return ImportanceAnalyzer(mock_context, config)
 
@@ -50,27 +46,25 @@ class TestImportanceAnalyzer:
         assert "Test content" in prompt
         assert "0-10" in prompt
 
-    def test_parse_score_valid(self, analyzer: ImportanceAnalyzer) -> None:
-        assert analyzer._parse_score("8") == 8
-        assert analyzer._parse_score("  5  ") == 5
-        assert analyzer._parse_score("The score is 9.") == 9
+    def test_parse_score_valid(self) -> None:
+        assert parse_score("8", default=0) == 8
+        assert parse_score("  5  ", default=0) == 5
+        assert parse_score("The score is 9.", default=0) == 9
 
-    def test_parse_score_boundary(self, analyzer: ImportanceAnalyzer) -> None:
-        assert analyzer._parse_score("0") == 0
-        assert analyzer._parse_score("10") == 10
-        assert analyzer._parse_score("15") == 10
-        assert analyzer._parse_score("-3") == 0
+    def test_parse_score_boundary(self) -> None:
+        assert parse_score("0", default=0) == 0
+        assert parse_score("10", default=0) == 10
+        assert parse_score("15", default=0) == 10
+        assert parse_score("-3", default=0) == 0
 
-    def test_parse_score_invalid(self, analyzer: ImportanceAnalyzer) -> None:
-        assert analyzer._parse_score("no number here") == 0
-        assert analyzer._parse_score("") == 0
-        assert analyzer._parse_score("three") == 0
+    def test_parse_score_invalid(self) -> None:
+        assert parse_score("no number here", default=0) == 0
+        assert parse_score("", default=0) == 0
+        assert parse_score("three", default=0) == 0
 
     @pytest.mark.asyncio
     async def test_analyze_success(
-        self,
-        analyzer: ImportanceAnalyzer,
-        mock_context: MagicMock,
+        self, analyzer: ImportanceAnalyzer, mock_context: MagicMock,
     ) -> None:
         mock_context.llm_generate.return_value = MagicMock(completion_text="8")
         score = await analyzer.analyze("Important personal preference")
@@ -79,9 +73,7 @@ class TestImportanceAnalyzer:
 
     @pytest.mark.asyncio
     async def test_analyze_with_custom_model(
-        self,
-        mock_context: MagicMock,
-        config: PluginConfig,
+        self, mock_context: MagicMock, config: PluginConfig,
     ) -> None:
         config.importance_analyze_model = "custom-model"
         analyzer = ImportanceAnalyzer(mock_context, config)
@@ -92,9 +84,7 @@ class TestImportanceAnalyzer:
 
     @pytest.mark.asyncio
     async def test_analyze_empty_model_uses_default(
-        self,
-        mock_context: MagicMock,
-        config: PluginConfig,
+        self, mock_context: MagicMock, config: PluginConfig,
     ) -> None:
         config.importance_analyze_model = ""
         analyzer = ImportanceAnalyzer(mock_context, config)
@@ -103,26 +93,32 @@ class TestImportanceAnalyzer:
         kwargs = mock_context.llm_generate.call_args.kwargs
         assert "model" not in kwargs
 
+    @pytest.mark.asyncio
+    async def test_should_promote_to_l3(
+        self, analyzer: ImportanceAnalyzer,
+    ) -> None:
+        analyzer._context.llm_generate.return_value = MagicMock(completion_text="9")
+        result = await analyzer.should_promote_to_l3("Any content")
+        assert result is True
+
     # 灰区批量重评
     # ================================================================
 
     @pytest.mark.asyncio
     async def test_batch_recheck_empty(
-        self,
-        analyzer: ImportanceAnalyzer,
+        self, analyzer: ImportanceAnalyzer,
     ) -> None:
         result = await analyzer.batch_recheck([])
         assert result == []
 
     @pytest.mark.asyncio
     async def test_batch_recheck(
-        self,
-        analyzer: ImportanceAnalyzer,
-        mock_context: MagicMock,
+        self, analyzer: ImportanceAnalyzer, mock_context: MagicMock,
     ) -> None:
-        mock_context.llm_generate.return_value = MagicMock(
-            completion_text=("[0] 7 keep 用户偏好信息\n[1] 2 drop 信息已过时")
-        )
+        mock_context.llm_generate.return_value = MagicMock(completion_text=(
+            "[0] 7 keep 用户偏好信息\n"
+            "[1] 2 drop 信息已过时"
+        ))
         memories = [
             {
                 "id": "vid-1",
@@ -148,9 +144,7 @@ class TestImportanceAnalyzer:
 
     @pytest.mark.asyncio
     async def test_merge_content(
-        self,
-        analyzer: ImportanceAnalyzer,
-        mock_context: MagicMock,
+        self, analyzer: ImportanceAnalyzer, mock_context: MagicMock,
     ) -> None:
         mock_context.llm_generate.return_value = MagicMock(
             completion_text="用户偏好美式咖啡，每天早晨一杯",
@@ -160,22 +154,3 @@ class TestImportanceAnalyzer:
             "用户每天早晨喝美式咖啡",
         )
         assert "咖啡" in result
-
-    # _call_llm 默认 provider 场景
-    # ================================================================
-
-    @pytest.mark.asyncio
-    async def test_call_llm_uses_default_provider_when_no_umo(
-        self,
-        analyzer: ImportanceAnalyzer,
-        mock_context: MagicMock,
-    ) -> None:
-        """umo 为空时应通过 get_using_provider 获取默认 provider。"""
-        mock_context.llm_generate.return_value = MagicMock(
-            completion_text="test response"
-        )
-        result = await analyzer._call_llm("test prompt", umo="")
-        assert result == "test response"
-        kwargs = mock_context.llm_generate.call_args.kwargs
-        assert kwargs["chat_provider_id"] == "default-provider"
-        mock_context.get_using_provider.assert_called_once()
