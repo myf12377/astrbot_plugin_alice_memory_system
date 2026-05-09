@@ -77,12 +77,10 @@ class VectorStore:
     def _check_migration(self) -> None:
         """检测旧 ChromaDB 内置 collection 是否有待迁移数据。
 
-        仅在外部 provider collection 为空时检测。
         找到数据后标记 _migration_pending=True，不立即执行迁移
         （因为 __init__ 时 EmbeddingProvider 可能尚未加载）。
+        迁移完成后删除旧 collection，后续重启不再重复迁移。
         """
-        if self._collection.count() > 0:
-            return  # 新 collection 已有数据，无需迁移
         if self._embedding_func is None:
             return  # 无外部 provider，无法迁移
         try:
