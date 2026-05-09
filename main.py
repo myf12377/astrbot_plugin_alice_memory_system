@@ -246,6 +246,13 @@ class AliceMemoryPlugin(Star):
         self._scheduler.start()
         logger.info("[AliceMemory] 定时调度就绪 | Scheduler ✓")
 
+        # ---- 延迟恢复: JSON → ChromaDB ----
+        # 若 l3/{uid}.json 有数据但 ChromaDB 为空，从 JSON 重建向量索引。
+        # create_task 延迟执行，等待 ProviderManager 初始化完毕。
+        import asyncio as _asyncio
+        _loop = _asyncio.get_event_loop()
+        _loop.create_task(self._recover_l3_from_json())
+
         logger.info("[AliceMemory] 插件初始化完成")
 
     # =========================================================================
@@ -364,6 +371,11 @@ class AliceMemoryPlugin(Star):
                     if score >= self.plugin_config.importance_threshold:
                         vid = await self._vector_store.add_memory(
                             user_id, content, {"importance": score},
+                        )
+                        # 双写: ChromaDB + JSON（防丢失、可转移）
+                        self._storage.add_l3_memory(
+                            user_id, content,
+                            {"importance": score, "vector_id": vid},
                         )
                         logger.info(
                             "[AliceMemory] L3 晋升 | vid=%s | score=%d",
@@ -486,6 +498,10 @@ class AliceMemoryPlugin(Star):
             vid = await self._vector_store.add_memory(
                 user_id, content, {"importance": score},
             )
+            # 双写: ChromaDB + JSON
+            self._storage.add_l3_memory(
+                user_id, content, {"importance": score, "vector_id": vid},
+            )
             yield event.plain_result(
                 f"[AliceMemory] 已存入 L3 | id={vid[:8]} | 重要性={score}/10"
             )
@@ -507,6 +523,12 @@ class AliceMemoryPlugin(Star):
             return
 
         if self._vector_store.delete_memory(memory_id):
+            # 同步删除 JSON 存储中的对应条目（遍历全部用户匹配 vector_id）
+            for uid in self._identity.get_all_users():
+                for m in self._storage.get_l3_memories(uid):
+                    if m.metadata.get("vector_id", "").startswith(memory_id):
+                        self._storage.delete_l3_memory(uid, m.memory_id)
+                        break
             yield event.plain_result(f"[AliceMemory] 记忆 {memory_id[:8]} 已删除")
         else:
             yield event.plain_result(f"[AliceMemory] 记忆 {memory_id[:8]} 未找到")
@@ -553,6 +575,53 @@ class AliceMemoryPlugin(Star):
     # =========================================================================
     # 内部方法
     # =========================================================================
+
+    async def _recover_l3_from_json(self) -> None:
+        """从 JSON 恢复 L3 记忆到 ChromaDB（Provider 就绪后延迟执行）。
+
+        场景: ChromaDB 数据丢失（迁移失败/手动清理），但 l3/{uid}.json 完好。
+        遍历所有用户，对 ChromaDB 为空的用户从 JSON 重建向量索引。
+
+        延迟机制: 通过 loop.create_task() 调用，等待 ProviderManager 初始化。
+        若首次调用时 Provider 仍未就绪（EmbeddingResolver 抛 RuntimeError），
+        静默跳过——后续 L3 操作会在 Provider 就绪后触发 _ensure_migrated。
+        """
+        import asyncio as _asyncio
+        await _asyncio.sleep(3)  # 等待 ProviderManager 初始化
+        try:
+            for uid in self._identity.get_all_users():
+                chroma_memories = self._vector_store.get_user_memories(uid)
+                if chroma_memories:
+                    continue  # ChromaDB 已有数据，跳过
+                json_memories = self._storage.get_l3_memories(uid)
+                if not json_memories:
+                    continue
+                logger.info(
+                    "[AliceMemory] JSON → ChromaDB 恢复 | uid=%s... | count=%d",
+                    uid[:8], len(json_memories),
+                )
+                for m in json_memories:
+                    try:
+                        await self._vector_store.add_memory(
+                            uid, m.content,
+                            {**m.metadata, "vector_id": m.memory_id},
+                        )
+                    except RuntimeError:
+                        # Provider 仍未就绪，跳过本次恢复（下次 L3 操作会触发迁移）
+                        logger.warning(
+                            "[AliceMemory] L3 恢复跳过 | Provider 未就绪，将在首次 L3 操作时重试"
+                        )
+                        return
+                    except Exception as e:
+                        logger.error(
+                            "[AliceMemory] L3 恢复单条失败 | %s", e,
+                        )
+                logger.info(
+                    "[AliceMemory] JSON → ChromaDB 恢复完成 | uid=%s... | count=%d",
+                    uid[:8], len(json_memories),
+                )
+        except Exception:
+            logger.error("[AliceMemory] L3 JSON 恢复异常", exc_info=True)
 
     async def _build_feedback(self, user_id: str, default_text: str) -> str:
         """根据 manual_compress_feedback_mode 配置生成压缩反馈。
