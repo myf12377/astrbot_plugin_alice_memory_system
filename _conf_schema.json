@@ -99,8 +99,7 @@
     "type": "string",
     "description": "向量嵌入模型",
     "default": "auto",
-    "options": ["auto"],
-    "hint": "auto=使用首个可用嵌入模型 / 或输入模型名称(如 Qwen/Qwen3-VL-Embedding-8B)。未找到指定模型时自动降级为 auto。旧 ChromaDB 内置数据将在首次 L3 操作时自动迁移。"
+    "hint": "auto=使用首个可用嵌入模型。也可输入模型名称，如 Qwen/Qwen3-VL-Embedding-8B。未找到指定模型时自动降级为 auto。"
   },
   "importance_threshold": {
     "type": "int",
