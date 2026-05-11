@@ -2,7 +2,7 @@
 
 `astrbot_alice_memory_modul` — 三层记忆存储系统（L1原始对话 / L2双路中期记忆 / L3长期向量记忆）。
 
-> **v2.3 P15 完成** — EmbeddingResolver 延迟解析 + L3 双写(ChromaDB+JSON) + cosine 距离 + 维度自动检测，86 项测试通过。
+> **v2.3 P17 完成** — EmbeddingResolver 延迟解析 + L3 双写(ChromaDB+JSON) + cosine 距离 + 维度自动检测 + 自校准阈值，86 项测试通过。
 
 ## AI 行为规则
 

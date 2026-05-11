@@ -226,7 +226,7 @@ class ContextInjector:
 
         self._clean_marker(request, L3_MARKER)
 
-        threshold = self._config.l3_merge_similarity
+        threshold = self._vector_store.get_effective_threshold()  # P17 自校准优先
         injected = 0
         for r in results:
             score = r.get("distance", 0)
@@ -363,7 +363,7 @@ class ContextInjector:
         if not results:
             return None
 
-        threshold = self._config.l3_merge_similarity
+        threshold = self._vector_store.get_effective_threshold()  # P17 自校准优先
         items: list[str] = []
         for i, r in enumerate(results, 1):
             score = r.get("distance", 0)

@@ -55,6 +55,8 @@ class VectorStore:
         self._old_collection_data: dict | None = None
         # collection 重建回调（维度变化时通知外部执行 JSON 恢复）
         self._on_collection_rebuilt: Callable[[], Awaitable[None]] | None = None
+        # 自校准标记（避免重复校准）
+        self._calibrated = False
         self._init_client(data_dir)
 
     def _init_client(self, data_dir: Path) -> None:
@@ -226,6 +228,73 @@ class VectorStore:
         logger.info("[AliceMemory] Collection 已重建 | dim=%d", actual_dim)
         if self._on_collection_rebuilt:
             await self._on_collection_rebuilt()
+
+    # ------------------------------------------------------------------
+    # 自校准 — 换模型自动计算建议阈值（P17）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _cosine_sim(a: list[float], b: list[float]) -> float:
+        """计算两个向量的余弦相似度。"""
+        dot = sum(x * y for x, y in zip(a, b))
+        na = sum(x * x for x in a) ** 0.5
+        nb = sum(x * x for x in b) ** 0.5
+        return dot / (na * nb) if na and nb else 0.0
+
+    async def _auto_calibrate(self) -> None:
+        """恢复完成后自动校准阈值：两两相似度中位数 → metadata。
+
+        原理：异主题记忆间的相似度天然低于同主题记忆。
+        取两两相似度中位数作为阈值，可有效区分相关/无关。
+        已校准则跳过（_calibrated 标记），避免重复计算。
+        """
+        if self._calibrated:
+            return
+        self._calibrated = True
+        all_data = self._collection.get(include=["embeddings"])
+        embeddings = all_data.get("embeddings") or []
+        n = len(embeddings)
+        if n < 2:
+            logger.info("[AliceMemory] L3 自校准跳过 | 记忆数=%d（需 ≥2 条）", n)
+            return
+        # 两两计算余弦相似度
+        similarities: list[float] = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                sim = self._cosine_sim(embeddings[i], embeddings[j])
+                similarities.append(round(sim, 4))
+        similarities.sort()
+        median = similarities[len(similarities) // 2]
+        # 写入 collection metadata
+        try:
+            self._collection.modify(metadata={
+                **self._collection.metadata,
+                "similarity_threshold": f"{median:.4f}",
+            })
+        except Exception:
+            pass
+        logger.info(
+            "[AliceMemory] L3 自校准完成 | 中位数=%.4f | 对数=%d | 阈值已写入 collection",
+            median, len(similarities),
+        )
+
+    def get_effective_threshold(self) -> float:
+        """获取当前生效的相似度阈值。
+
+        优先级：用户手动覆盖（config≠默认0.4）→ 自校准值 → 默认0.4。
+        供 context_injector / main.py 调用。
+        """
+        # 用户手动修改了 WebUI 配置 → 优先使用
+        if self._config.l3_merge_similarity != 0.4:
+            return self._config.l3_merge_similarity
+        # 自校准值
+        try:
+            stored = self._collection.metadata.get("similarity_threshold", "")
+            if stored:
+                return float(stored)
+        except Exception:
+            pass
+        return 0.4
 
     @staticmethod
     def _now_iso() -> str:

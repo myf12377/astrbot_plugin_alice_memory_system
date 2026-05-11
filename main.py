@@ -561,8 +561,8 @@ class AliceMemoryPlugin(Star):
                 yield event.plain_result("[AliceMemory] 未找到相关记忆")
                 return
 
-            # 相似度阈值过滤（与 inject_l3 一致）
-            threshold = self.plugin_config.l3_merge_similarity
+            # 相似度阈值过滤（与 inject_l3 一致，P17 自校准优先）
+            threshold = self._vector_store.get_effective_threshold()
             lines = ["[AliceMemory] L3 记忆搜索结果:"]
             filtered = 0
             for r in results:
@@ -636,6 +636,8 @@ class AliceMemoryPlugin(Star):
                     "[AliceMemory] JSON → ChromaDB 恢复完成 | uid=%s... | count=%d",
                     uid[:8], len(json_memories),
                 )
+            # 恢复完成后自校准阈值（P17）
+            await self._vector_store._auto_calibrate()
         except Exception:
             logger.error("[AliceMemory] L3 JSON 恢复异常", exc_info=True)
 

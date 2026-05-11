@@ -34,6 +34,7 @@ class TestContextInjector:
     def mock_vector_store(self) -> MagicMock:
         vs = MagicMock()
         vs.search = AsyncMock(return_value=[])
+        vs.get_effective_threshold = MagicMock(return_value=0.4)  # P17
         return vs
 
     @pytest.fixture

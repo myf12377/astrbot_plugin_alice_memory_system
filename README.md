@@ -29,7 +29,7 @@ pip install chromadb pydantic
 | **L1** | 原始对话 | 轮次滑窗 / 磁盘 200 轮 | 日内短期记忆，按轮次平滑滑出 |
 | **L2-A** | 渐进周摘要 | 一周，周一重置 | 上下文渐进压缩，覆盖式注入 |
 | **L2-B** | 每日磁盘摘要 | 7 天 TTL | 独立日摘要，注入最近 N 天 |
-| **L3** | 长期向量记忆 | 衰减模型 | 重要性评估 → 外部嵌入 → 语义检索(cosine) → 自然遗忘。ChromaDB + JSON 双写防丢失 |
+| **L3** | 长期向量记忆 | 衰减模型 | 重要性评估 → 外部嵌入 → 语义检索(cosine) → 自校准阈值 → 自然遗忘。ChromaDB + JSON 双写防丢失 |
 
 ### 记忆流转
 
@@ -84,6 +84,13 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 | 反馈 | `manual_compress_feedback_mode`(llm) + 固定文本/LLM prompt |
 
 所有配置项详见 `_conf_schema.json`。
+
+### L3 自校准
+
+切换嵌入模型后，插件在首次恢复 L3 记忆时自动进行相似度自校准：
+- 对所有记忆两两计算余弦相似度
+- 取中位数作为该模型的专属阈值
+- 如需手动覆盖，在 WebUI 修改 `l3_merge_similarity` 即可
 
 ## 插件命令
 
