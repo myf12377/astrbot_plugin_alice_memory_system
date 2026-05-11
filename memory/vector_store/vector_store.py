@@ -71,25 +71,34 @@ class VectorStore:
         self._check_migration()
 
     def _ensure_cosine_collection(self) -> None:
-        """确保 collection 使用 cosine 距离度量。
+        """确保 collection 使用 cosine 距离度量且有 embedding_dim 标记。
 
         ChromaDB 默认 l2 距离，但代码中 similarity = 1.0 - distance
-        仅对 cosine 距离有效。若现有 collection 非 cosine，删掉重建。
-        同时记录嵌入维度，维度变化时也触发重建。
+        仅对 cosine 距离有效。若现有 collection 非 cosine 或缺少
+        embedding_dim（P14 前创建的旧集合），删掉重建。
         数据由 P11 的 _recover_l3_from_json 从 l3/{uid}.json 恢复。
         """
         desired_space = "cosine"
         try:
             existing = self._client.get_collection(name=self._collection_name)
             existing_space = existing.metadata.get("hnsw:space", "")
+            has_dim = bool(existing.metadata.get("embedding_dim", ""))
             if existing_space == desired_space:
-                self._collection = existing
-                return
-            # 距离度量不匹配 → 删除重建
-            logger.info(
-                "[AliceMemory] 距离度量不匹配 | current=%s → desired=%s | 删除旧 collection 重建",
-                existing_space or "l2(default)", desired_space,
-            )
+                # 外部 provider 必须有 embedding_dim 以支持维度变化检测
+                # 内置 ChromaDB collection (embedding_func=None) 不需要
+                if self._embedding_func is None or has_dim:
+                    self._collection = existing
+                    return
+            # 距离度量不匹配 或 旧 collection 缺少 embedding_dim → 删除重建
+            if not has_dim:
+                logger.info(
+                    "[AliceMemory] 旧 collection 缺少 embedding_dim，删除重建以确保维度一致"
+                )
+            else:
+                logger.info(
+                    "[AliceMemory] 距离度量不匹配 | current=%s → desired=%s | 删除旧 collection 重建",
+                    existing_space or "l2(default)", desired_space,
+                )
             self._client.delete_collection(self._collection_name)
         except Exception:
             pass  # collection 不存在，正常创建
