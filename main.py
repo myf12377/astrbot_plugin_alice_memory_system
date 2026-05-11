@@ -559,8 +559,18 @@ class AliceMemoryPlugin(Star):
                 yield event.plain_result("[AliceMemory] 未找到相关记忆")
                 return
 
+            # 按相似度阈值过滤，与 inject_l3 行为一致
+            threshold = self.plugin_config.l3_merge_similarity
+            filtered = [
+                r for r in results
+                if 1.0 - r.get("distance", 1.0) >= threshold
+            ]
+            if not filtered:
+                yield event.plain_result("[AliceMemory] 未找到相关记忆")
+                return
+
             lines = ["[AliceMemory] L3 记忆搜索结果:"]
-            for i, r in enumerate(results, 1):
+            for i, r in enumerate(filtered, 1):
                 content = r.get("content", "")[:80]  # 截断显示，避免刷屏
                 vid = r.get("id", "?")[:8]
                 meta = r.get("metadata", {})
