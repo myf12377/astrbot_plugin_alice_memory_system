@@ -272,15 +272,22 @@ class VectorStore:
         return memories
 
     def delete_memory(self, vector_id: str) -> bool:
-        """按 vector_id 删除记忆。"""
+        """按 vector_id 或前缀删除记忆（兼容 /forget 传入的短 ID）。"""
         if not self._ensure_collection():
             return False
         try:
+            # 先精确匹配（完整 UUID）
             existing = self._collection.get(ids=[vector_id])
-            if not existing["ids"]:
-                return False
-            self._collection.delete(ids=[vector_id])
-            return True
+            if existing["ids"]:
+                self._collection.delete(ids=[vector_id])
+                return True
+            # 前缀匹配（/forget 传入前 8 位 UUID）
+            all_data = self._collection.get(include=[])
+            for full_id in all_data.get("ids", []):
+                if full_id.startswith(vector_id):
+                    self._collection.delete(ids=[full_id])
+                    return True
+            return False
         except Exception:
             return False
 
