@@ -252,7 +252,10 @@ class VectorStore:
             return
         self._calibrated = True
         all_data = self._collection.get(include=["embeddings"])
-        embeddings = all_data.get("embeddings") or []
+        emb_list = all_data.get("embeddings")
+        if emb_list is None:
+            return
+        embeddings = list(emb_list)
         n = len(embeddings)
         if n < 2:
             logger.info("[AliceMemory] L3 自校准跳过 | 记忆数=%d（需 ≥2 条）", n)
