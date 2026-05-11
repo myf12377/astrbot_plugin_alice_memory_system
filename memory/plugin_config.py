@@ -140,8 +140,8 @@ class PluginConfig(BaseModel):
         description="重要性阈值，≥此值晋升 L3",
     )
     l3_merge_similarity: float = Field(
-        default=0.9, ge=0.0, le=1.0,
-        description="向量相似度合并阈值",
+        default=0.4, ge=0.0, le=1.0,
+        description="向量相似度阈值（Qwen 推荐 0.35-0.5，ChromaDB 内置推荐 0.85-0.95）",
     )
     l3_merge_interval_days: int = Field(
         default=30, ge=1, le=365,

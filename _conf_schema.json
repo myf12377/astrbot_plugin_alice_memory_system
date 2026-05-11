@@ -109,9 +109,9 @@
   },
   "l3_merge_similarity": {
     "type": "float",
-    "description": "向量相似度合并阈值",
-    "default": 0.9,
-    "hint": "范围 0.0-1.0。两条记忆相似度 ≥ 此值触发 LLM 合并。0.85-0.95 推荐。"
+    "description": "向量相似度阈值",
+    "default": 0.4,
+    "hint": "范围 0.0-1.0。Qwen 嵌入推荐 0.35-0.5，ChromaDB 内置推荐 0.85-0.95。影响 /show_memory 过滤、L3 注入、记忆合并。"
   },
   "l3_merge_interval_days": {
     "type": "int",
