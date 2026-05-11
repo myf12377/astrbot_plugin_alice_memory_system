@@ -559,14 +559,28 @@ class AliceMemoryPlugin(Star):
                 yield event.plain_result("[AliceMemory] 未找到相关记忆")
                 return
 
+            # 相似度阈值过滤（与 inject_l3 一致）
+            threshold = self.plugin_config.l3_merge_similarity
             lines = ["[AliceMemory] L3 记忆搜索结果:"]
-            for i, r in enumerate(results, 1):
-                content = r.get("content", "")[:80]  # 截断显示，避免刷屏
+            filtered = 0
+            for r in results:
+                distance = r.get("distance", 0)
+                similarity = 1.0 - distance
+                if similarity < threshold:
+                    continue
+                filtered += 1
+                content = r.get("content", "")[:80]
                 vid = r.get("id", "?")[:8]
                 meta = r.get("metadata", {})
                 score = meta.get("importance", "?")
-                lines.append(f"  {i}. [{score}] {content}... (id:{vid})")
-            yield event.plain_result("\n".join(lines))
+                lines.append(
+                    f"  {filtered}. [{score}] {content}... (id:{vid} | 相似度:{similarity:.0%})"
+                )
+
+            if filtered == 0:
+                yield event.plain_result("[AliceMemory] 未找到相关记忆")
+            else:
+                yield event.plain_result("\n".join(lines))
 
         except Exception as e:
             logger.error("[AliceMemory] /show_memory 失败 | %s", e, exc_info=True)
