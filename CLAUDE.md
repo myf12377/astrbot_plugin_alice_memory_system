@@ -2,7 +2,7 @@
 
 `astrbot_alice_memory_modul` — 三层记忆存储系统（L1原始对话 / L2双路中期记忆 / L3长期向量记忆）。
 
-> **v2.3 P10 完成** — EmbeddingResolver 延迟解析，彻底抛弃 ChromaDB 内置，86 项测试通过。
+> **v2.3 P15 完成** — EmbeddingResolver 延迟解析 + L3 双写(ChromaDB+JSON) + cosine 距离 + 维度自动检测，86 项测试通过。
 
 ## AI 行为规则
 
@@ -32,17 +32,17 @@
 ```
 astrbot_alice_memory_modul/
 ├── main.py                        # ✅ Star 子类主入口（第5层）— C2 完成（4命令+silent反馈）
-├── _conf_schema.json              # ✅ 36键框架配置 schema
-├── metadata.yaml                  # ✅ v2.0.0
+├── _conf_schema.json              # ✅ 31键框架配置 schema
+├── metadata.yaml                  # ✅ v2.0.1
 ├── memory/
-│   ├── plugin_config.py           # ✅ PluginConfig 36字段 Pydantic 模型（第0层）
+│   ├── plugin_config.py           # ✅ PluginConfig 31字段 Pydantic 模型（第0层）
 │   ├── context_injector.py        # ✅ 上下文注入（第3层）— B2 完成
 │   ├── identity/                  # 跨平台身份 [稳定]
 │   ├── storage/                   # ✅ JSON 持久化（第1层）— A1 完成
 │   ├── vector_store/              # ✅ ChromaDB 向量（第1层）— A2 完成
 │   ├── analyzer/                  # ✅ LLM 重要性分析（第1层）— A3 完成
 │   ├── compressor/                # ✅ Path A/B 压缩（第2层）— B1 完成
-│   ├── scheduler/                 # ✅ 5段定时调度（第4层）— C1 完成
+│   ├── scheduler/                 # ✅ 6段定时调度（第4层）— C1 完成
 │   └── migration/                 # 导入导出 [稳定]
 ```
 
@@ -62,7 +62,10 @@ PluginConfig (0) → Identity(1) / Storage(1) / VectorStore(1) / Analyzer(1)
                                 Main(5)
 ```
 
-**关键约束**：Injector 不依赖 Compressor（注入只读，压缩只写），Scheduler 是唯一的编排者，Main 是唯一的框架接触点。EmbeddingResolver 延迟到首次 L3 操作时才解析 Provider（解决 AstrBot 插件先于 Provider 初始化的时序问题）。
+**关键约束**：Injector 不依赖 Compressor（注入只读，压缩只写），Scheduler 是唯一的编排者，Main 是唯一的框架接触点。
+- EmbeddingResolver 延迟到首次 L3 操作时才解析 Provider（P10）
+- L3 双写：vector_store 写入 ChromaDB 时同步写 l3/{uid}.json（P11）
+- ChromaDB 强制 cosine 距离，自动检测嵌入维度变化并重建（P14+P15）
 
 ## 调度索引
 
@@ -71,12 +74,14 @@ PluginConfig (0) → Identity(1) / Storage(1) / VectorStore(1) / Analyzer(1)
 | 用户消息注入 | Main.on_llm_request | Identity→Storage(写L1)→Injector(读全部→注入req) |
 | 判断晋升L3 | Main.on_llm_request | Analyzer.analyze→VectorStore.add→(_ensure_migrated延迟迁移)→find_similar→merge |
 | 01:00 Path B | Scheduler | Storage(L1)→Compressor(LLM)→Storage(写L2) |
-| 02:00 L1清理 | Scheduler | Storage.delete_old_l1_dialogues |
+| 02:00 L1清理 | Scheduler | Storage.trim_to_recent_rounds |
 | 03:00 L3衰减 | Scheduler | VectorStore.apply_decay→get_gray→Analyzer.batch_recheck |
 | 04:00 Path A | Scheduler | Storage(L1+L2+周)→Compressor(LLM)→Storage(覆写周) |
 | 周一05:00 | Scheduler | Storage.clear_weekly_summary |
+| 动态cron L3合并 | Scheduler | VectorStore.find_similar→Analyzer.merge_content→merge_memories |
 | /compact | Main命令 | Compressor→Storage |
-| /show_memory | Main命令 | VectorStore.search |
+| /show_memory | Main命令 | VectorStore.search（含相似度阈值过滤 P13） |
+| /forget | Main命令 | VectorStore.delete_memory（前缀匹配 P12）+ Storage.delete_l3_memory |
 | 导出/导入 | Main命令 | MigrationModule |
 
 上下文字段注入位置：
@@ -240,7 +245,7 @@ logger.debug(f"[AliceMemory] 阶段 | 详细信息...")
 |------|------|------|
 | `__init__` 完成 | INFO | `插件初始化 | fields=N | data_dir=...` |
 | 各 Layer 模块就绪 | INFO | `模块就绪 | Storage ✓ | VectorStore ✓ | ...` |
-| Scheduler 启动 | INFO | `定时任务注册 | tasks=5` |
+| Scheduler 启动 | INFO | `定时任务注册 | tasks=6` |
 | on_llm_request 入口 | INFO | `on_llm_request | uid=xxx(8) | msg_len=N` |
 | 每条管线注入 | DEBUG | `注入 L1: N条 → contexts` / `注入 L2 Path B: 最近N天` |
 | 注入完成 | INFO | `注入完成 | contexts+N | extra_parts+N` |

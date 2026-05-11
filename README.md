@@ -6,10 +6,10 @@ AstrBot 三层记忆插件 — 让 AI 拥有类人记忆：短期对话、中期
 
 - **L1 短期记忆**：原始对话轮次滑窗，磁盘保留 200 轮
 - **L2 中期概括**：每日摘要 + 渐进周摘要，双路径自动压缩
-- **L3 长期沉淀**：重要记忆向量存储，通过 AstrBot EmbeddingProvider 语义嵌入，艾宾浩斯衰减模型自然遗忘
+- **L3 长期沉淀**：重要记忆双写存储（ChromaDB 向量 + JSON 持久化），通过 AstrBot EmbeddingProvider 语义嵌入，余弦距离 + 维度变化自动检测，艾宾浩斯衰减模型自然遗忘
 - **静默运行**：压缩后台自动执行，用户无感知
 - **前端可调**：31 项配置即插即用，全部有默认值
-- **数据安全**：支持完整备份/还原/导出/导入
+- **数据安全**：L3 JSON 备份防丢失，支持完整备份/还原/导出/导入
 
 ## 快速开始
 
@@ -29,7 +29,7 @@ pip install chromadb pydantic
 | **L1** | 原始对话 | 轮次滑窗 / 磁盘 200 轮 | 日内短期记忆，按轮次平滑滑出 |
 | **L2-A** | 渐进周摘要 | 一周，周一重置 | 上下文渐进压缩，覆盖式注入 |
 | **L2-B** | 每日磁盘摘要 | 7 天 TTL | 独立日摘要，注入最近 N 天 |
-| **L3** | 长期向量记忆 | 衰减模型 | 重要性评估 → 外部 EmbeddingProvider 嵌入 → 语义检索 → 自然遗忘 |
+| **L3** | 长期向量记忆 | 衰减模型 | 重要性评估 → 外部嵌入 → 语义检索(cosine) → 自然遗忘。ChromaDB + JSON 双写防丢失 |
 
 ### 记忆流转
 
@@ -39,7 +39,7 @@ pip install chromadb pydantic
 L1 存储（原始对话，200轮）
    ├─→ Path B 日压缩（凌晨 1:00）→ L2 日摘要（7天TTL）
    ├─→ Path A 上下文压缩（凌晨 4:00）→ 渐进周摘要（周一重置）
-   └─→ 重要性分析 → L3 向量存储（外部 EmbeddingProvider + 衰减+合并+灰区重评）
+   └─→ 重要性分析 → L3 双写存储（ChromaDB cosine + l3/{uid}.json 备份）
 ```
 
 ### L3 衰减模型
@@ -78,7 +78,7 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 | 通用 | `data_dir`、`hook_enabled`、`manage_context` |
 | L1 | `l1_enabled`、`l1_save_rounds`(200)、`l1_inject_rounds`(80) |
 | L2 | Path A/B 独立开关、`l2_ttl`(7)、`l2_daily_inject_count`(3) |
-| L3 | `l3_enabled`、`l3_embedding_provider`(auto)、`importance_threshold`(8)、`l3_decay_rate`(0.995) |
+| L3 | `l3_enabled`、`l3_embedding_provider`(auto)、`l3_merge_similarity`(0.4)、`importance_threshold`(8) |
 | LLM | `compress_model`、`importance_analyze_model`、`llm_max_tokens`(1024)、`llm_temperature`(0.7) |
 | 注入 | `inject_l1`、`inject_l2_path_a`、`inject_l2_path_b`、`inject_l3` |
 | 反馈 | `manual_compress_feedback_mode`(llm) + 固定文本/LLM prompt |
@@ -114,6 +114,7 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 | 03:00 | L3 维护：衰减计算 + 灰区重评 + 低分删除 |
 | 04:00 | Path A 周压缩：合并生成渐进周摘要 |
 | 周一 05:00 | 周摘要重置 |
+| 动态 cron | L3 相似记忆合并 |
 
 ## 数据管理
 
@@ -123,9 +124,9 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 ├── identity_map.json     # 跨平台用户身份映射
 ├── l1/{uid}.json         # L1 原始对话
 ├── l2/{uid}.json         # L2 日摘要 + 周摘要
-├── l3/{uid}.json         # L3 记忆元数据
+├── l3/{uid}.json         # L3 记忆 JSON 备份（双写，防丢失）
 ├── weekly/{uid}.json     # 周摘要持久化
-└── chroma/               # ChromaDB 向量库
+└── chroma/               # ChromaDB 向量库（cosine 距离，自动维度检测）
 ```
 
 通过 MigrationModule 可进行完整备份/还原，以及 `.astrmem` 和 ChromaDB 格式的导出/导入。
@@ -134,7 +135,7 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 
 - Python 3.10+
 - `ruff check --isolated .` / `ruff format --isolated .`
-- `pytest` — 89 项测试
+- `pytest` — 86 项测试
 
 ## 许可证
 
