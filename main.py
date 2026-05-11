@@ -217,6 +217,8 @@ class AliceMemoryPlugin(Star):
             self.plugin_config,
             embedding_func=resolver,
         )
+        # 注册 collection 重建回调：维度变化时立即触发 JSON 恢复（P16）
+        self._vector_store.set_rebuild_callback(self._recover_l3_from_json)
         # ImportanceAnalyzer: 调用 LLM 对内容进行重要性评分（0-10）
         self._analyzer = ImportanceAnalyzer(context, self.plugin_config)
         logger.info(

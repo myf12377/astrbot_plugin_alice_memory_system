@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -53,6 +53,8 @@ class VectorStore:
         # 延迟迁移状态
         self._migration_pending = False
         self._old_collection_data: dict | None = None
+        # collection 重建回调（维度变化时通知外部执行 JSON 恢复）
+        self._on_collection_rebuilt: Callable[[], Awaitable[None]] | None = None
         self._init_client(data_dir)
 
     def _init_client(self, data_dir: Path) -> None:
@@ -100,6 +102,12 @@ class VectorStore:
                 "embedding_dim": "",  # 首次嵌入调用时填入实际维度
             },
         )
+
+    def set_rebuild_callback(
+        self, cb: Callable[[], Awaitable[None]],
+    ) -> None:
+        """注册 collection 重建后的恢复回调（P16：维度变化时触发 JSON 恢复）。"""
+        self._on_collection_rebuilt = cb
 
     # ------------------------------------------------------------------
     # 延迟迁移 — 旧 ChromaDB 内置数据 → 外部 provider
@@ -206,7 +214,9 @@ class VectorStore:
                 "embedding_dim": str(actual_dim),
             },
         )
-        logger.info("[AliceMemory] Collection 已重建 | dim=%d | JSON 恢复将在下次启动执行", actual_dim)
+        logger.info("[AliceMemory] Collection 已重建 | dim=%d", actual_dim)
+        if self._on_collection_rebuilt:
+            await self._on_collection_rebuilt()
 
     @staticmethod
     def _now_iso() -> str:
