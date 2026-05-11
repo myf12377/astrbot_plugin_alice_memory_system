@@ -99,6 +99,7 @@ effective_score = importance × 0.995^days + min(access_count, 10) × 0.3
 | `/compact [日期]` | 手动压缩（无参=周摘要，有日期=日摘要） |
 | `/important <内容>` | 分析重要性并存入 L3 |
 | `/show_memory <查询>` | 语义搜索 L3 记忆 |
+| `/l3_stats` | 查看 L3 状态（总记忆数、当前阈值） |
 | `/forget <记忆ID>` | 删除指定 L3 记忆 |
 
 ### 压缩反馈模式

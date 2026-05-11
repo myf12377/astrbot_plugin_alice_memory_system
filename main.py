@@ -556,7 +556,9 @@ class AliceMemoryPlugin(Star):
             return
 
         try:
-            results = await self._vector_store.search(user_id, query, top_k=5)
+            results = await self._vector_store.search(
+                user_id, query, top_k=self.plugin_config.l3_search_count,
+            )
             if not results:
                 yield event.plain_result("[AliceMemory] 未找到相关记忆")
                 return
@@ -587,6 +589,24 @@ class AliceMemoryPlugin(Star):
         except Exception as e:
             logger.error("[AliceMemory] /show_memory 失败 | %s", e, exc_info=True)
             yield event.plain_result(f"[AliceMemory] 搜索失败: {e}")
+
+    @filter.command("l3_stats")
+    async def cmd_l3_stats(self, event: AstrMessageEvent) -> None:
+        """查看 L3 记忆状态：模型、总记忆数、当前阈值。"""
+        try:
+            total = sum(
+                len(self._vector_store.get_user_memories(uid))
+                for uid in self._identity.get_all_users()
+            )
+            threshold = self._vector_store.get_effective_threshold()
+            yield event.plain_result(
+                f"[AliceMemory] L3 状态:\n"
+                f"  总记忆: {total} 条\n"
+                f"  当前阈值: {threshold:.2f}"
+            )
+        except Exception as e:
+            logger.error("[AliceMemory] /l3_stats 失败 | %s", e, exc_info=True)
+            yield event.plain_result(f"[AliceMemory] 状态查询失败: {e}")
 
     # =========================================================================
     # 内部方法

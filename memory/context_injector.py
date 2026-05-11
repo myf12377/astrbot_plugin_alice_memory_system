@@ -221,8 +221,9 @@ class ContextInjector:
         if not query:
             return
 
-        # 修复：参数顺序 → search(user_id, query, top_k)
-        results = await self._vector_store.search(user_id, query, top_k=3)
+        results = await self._vector_store.search(
+            user_id, query, top_k=self._config.l3_search_count,
+        )
 
         self._clean_marker(request, L3_MARKER)
 
@@ -356,10 +357,10 @@ class ContextInjector:
         if not self._vector_store:
             return None
 
-        k = top_k if top_k is not None else getattr(self._config, "l3_merge_similarity", 3)
+        k = top_k if top_k is not None else self._config.l3_search_count
         query = query.strip() if query else ""
 
-        results = await self._vector_store.search(user_id, query, top_k=min(k, 5))
+        results = await self._vector_store.search(user_id, query, top_k=k)
         if not results:
             return None
 

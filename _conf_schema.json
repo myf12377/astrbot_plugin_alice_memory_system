@@ -113,6 +113,12 @@
     "default": 0.4,
     "hint": "范围 0.0-1.0。换模型后自动校准阈值（取两两相似度中位数）。手动修改此值可覆盖自校准结果。影响 /show_memory 过滤、L3 注入、记忆合并。"
   },
+  "l3_search_count": {
+    "type": "int",
+    "description": "L3 语义检索条数",
+    "default": 5,
+    "hint": "范围 1-20。每次 /show_memory、L3 注入检索多少条候选记忆。"
+  },
   "l3_merge_interval_days": {
     "type": "int",
     "description": "全量合并周期（天）",
