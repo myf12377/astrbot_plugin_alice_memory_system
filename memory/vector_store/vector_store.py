@@ -62,13 +62,42 @@ class VectorStore:
             path=str(persist_dir),
             settings=ChromaSettings(anonymized_telemetry=False),
         )
-        self._collection = self._client.get_or_create_collection(
-            name=self._collection_name,
-            metadata={"description": "AstrBot L3 memory storage"},
-        )
+        # 确保 collection 使用 cosine 距离（代码中 similarity = 1.0 - distance 依赖此假设）
+        self._ensure_cosine_collection()
         # 不立即迁移 — 因为 __init__ 时 EmbeddingProvider 可能尚未加载
         # 改为标记迁移待处理，延迟到首次 L3 操作时执行 _ensure_migrated()
         self._check_migration()
+
+    def _ensure_cosine_collection(self) -> None:
+        """确保 collection 使用 cosine 距离度量。
+
+        ChromaDB 默认 l2 距离，但代码中 similarity = 1.0 - distance
+        仅对 cosine 距离有效。若现有 collection 非 cosine，删掉重建。
+        数据由 P11 的 _recover_l3_from_json 从 l3/{uid}.json 恢复。
+        """
+        desired_space = "cosine"
+        try:
+            existing = self._client.get_collection(name=self._collection_name)
+            existing_space = existing.metadata.get("hnsw:space", "")
+            if existing_space == desired_space:
+                self._collection = existing
+                return
+            # 距离度量不匹配 → 删除重建
+            logger.info(
+                "[AliceMemory] 距离度量不匹配 | current=%s → desired=%s | 删除旧 collection 重建",
+                existing_space or "l2(default)", desired_space,
+            )
+            self._client.delete_collection(self._collection_name)
+        except Exception:
+            pass  # collection 不存在，正常创建
+
+        self._collection = self._client.create_collection(
+            name=self._collection_name,
+            metadata={
+                "description": "AstrBot L3 memory storage",
+                "hnsw:space": desired_space,
+            },
+        )
 
     # ------------------------------------------------------------------
     # 延迟迁移 — 旧 ChromaDB 内置数据 → 外部 provider
