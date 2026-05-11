@@ -73,6 +73,7 @@ class VectorStore:
 
         ChromaDB 默认 l2 距离，但代码中 similarity = 1.0 - distance
         仅对 cosine 距离有效。若现有 collection 非 cosine，删掉重建。
+        同时记录嵌入维度，维度变化时也触发重建。
         数据由 P11 的 _recover_l3_from_json 从 l3/{uid}.json 恢复。
         """
         desired_space = "cosine"
@@ -96,6 +97,7 @@ class VectorStore:
             metadata={
                 "description": "AstrBot L3 memory storage",
                 "hnsw:space": desired_space,
+                "embedding_dim": "",  # 首次嵌入调用时填入实际维度
             },
         )
 
@@ -150,19 +152,61 @@ class VectorStore:
     async def _call_embedding_func_async(
         self, texts: list[str],
     ) -> list[list[float]]:
-        """调用 embedding 函数（兼容同步/异步/类实例 __call__）。"""
+        """调用 embedding 函数（兼容同步/异步/类实例 __call__），并检测维度变化。"""
         if self._embedding_func is None:
             return []
         import inspect
         func = self._embedding_func
-        # 检查是否为 async def 函数，或者有 async __call__ 的类实例（如 EmbeddingResolver）
         if (
             inspect.iscoroutinefunction(func)
             or inspect.iscoroutinefunction(getattr(func, "__call__", None))
         ):
-            return await func(texts)
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, func, texts)
+            result = await func(texts)
+        else:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, func, texts)
+        # 检测并记录嵌入维度，维度变化时触发重建
+        if result:
+            await self._track_embedding_dim(len(result[0]))
+        return result
+
+    async def _track_embedding_dim(self, actual_dim: int) -> None:
+        """记录嵌入维度；若与 collection 记录不符则删除重建（JSON 恢复兜底）。"""
+        meta = self._collection.metadata or {}
+        stored = meta.get("embedding_dim", "")
+        if not stored:
+            # 首次嵌入 → 记录维度
+            try:
+                self._collection.modify(
+                    metadata={**meta, "embedding_dim": str(actual_dim)},
+                )
+            except Exception:
+                pass
+            return
+        try:
+            stored_dim = int(stored)
+        except (ValueError, TypeError):
+            return
+        if stored_dim == actual_dim:
+            return
+        # 维度变化 → 删除旧 collection 重建（数据由 _recover_l3_from_json 恢复）
+        logger.info(
+            "[AliceMemory] 嵌入维度变化 | %d→%d | 删除旧 collection 重建",
+            stored_dim, actual_dim,
+        )
+        try:
+            self._client.delete_collection(self._collection_name)
+        except Exception:
+            pass
+        self._collection = self._client.create_collection(
+            name=self._collection_name,
+            metadata={
+                "description": "AstrBot L3 memory storage",
+                "hnsw:space": "cosine",
+                "embedding_dim": str(actual_dim),
+            },
+        )
+        logger.info("[AliceMemory] Collection 已重建 | dim=%d | JSON 恢复将在下次启动执行", actual_dim)
 
     @staticmethod
     def _now_iso() -> str:
