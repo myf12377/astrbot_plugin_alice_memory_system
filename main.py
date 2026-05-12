@@ -468,12 +468,22 @@ class AliceMemoryPlugin(Star):
                 if item is None:
                     yield event.plain_result(f"[AliceMemory] {date} 无对话可压缩")
                     return
+                if not item.strip():
+                    yield event.plain_result(
+                        f"[AliceMemory] {date} 压缩失败：LLM 未生成有效摘要，请稍后重试"
+                    )
+                    return
                 result_text = f"{date} 对话已压缩为日摘要"
             else:
                 # 无参数 = Path A 周压缩
                 item = await self._compressor.compress_context_summary(user_id)
                 if item is None:
                     yield event.plain_result("[AliceMemory] 无内容可压缩为周摘要")
+                    return
+                if not item.strip():
+                    yield event.plain_result(
+                        "[AliceMemory] 周压缩失败：LLM 未生成有效摘要，请稍后重试"
+                    )
                     return
                 result_text = "周摘要已更新"
 

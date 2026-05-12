@@ -64,6 +64,8 @@ class DialogueCompressor:
             hidden = self._config.l2_summary_hidden
 
         summary = await self._generate_summary(content, path="b", umo=umo)
+        if not summary.strip():  # P22 _looks_valid 拦截 → 空摘要，不存储
+            return None
         importance = await self._estimate_importance(summary, umo=umo)
 
         self._storage.add_summary(user_id, date, summary, importance, hidden=hidden)
@@ -110,6 +112,8 @@ class DialogueCompressor:
         )
         summary = await self._call_llm(prompt, umo)
         summary = summary.strip()
+        if not summary:  # P22 _looks_valid 拦截或 LLM 返回空 → 不存储
+            return None
         today_date = datetime.now(timezone.utc).date()
         week_start = today_date - timedelta(days=today_date.weekday())
         self._storage.set_weekly_summary(
