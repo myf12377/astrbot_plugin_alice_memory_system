@@ -2,7 +2,7 @@
 
 `astrbot_alice_memory_modul` — 三层记忆存储系统（L1原始对话 / L2双路中期记忆 / L3长期向量记忆）。
 
-> **v2.3 P17 完成** — EmbeddingResolver 延迟解析 + L3 双写(ChromaDB+JSON) + cosine 距离 + 维度自动检测 + 自校准阈值，86 项测试通过。
+> **v2.3 P20 完成** — 完整 L3 功能：延迟解析 + 双写 + cosine + 维度检测 + 自校准 + 检索/合并阈值分离 + /l3_merge 命令，86 项测试通过。
 
 ## AI 行为规则
 
@@ -78,7 +78,9 @@ PluginConfig (0) → Identity(1) / Storage(1) / VectorStore(1) / Analyzer(1)
 | 03:00 L3衰减 | Scheduler | VectorStore.apply_decay→get_gray→Analyzer.batch_recheck |
 | 04:00 Path A | Scheduler | Storage(L1+L2+周)→Compressor(LLM)→Storage(覆写周) |
 | 周一05:00 | Scheduler | Storage.clear_weekly_summary |
-| 动态cron L3合并 | Scheduler | VectorStore.find_similar→Analyzer.merge_content→merge_memories |
+| 动态cron L3合并 | Scheduler | VectorStore.merge_similar_for_user(P20) |
+| /l3_merge | Main命令 | VectorStore.merge_similar_for_user(user_id) — 仅处理当前用户 |
+| /l3_stats | Main命令 | VectorStore.get_effective_threshold + get_user_memories |
 | /compact | Main命令 | Compressor→Storage |
 | /show_memory | Main命令 | VectorStore.search（含相似度阈值过滤 P13） |
 | /forget | Main命令 | VectorStore.delete_memory（前缀匹配 P12）+ Storage.delete_l3_memory |
@@ -267,8 +269,10 @@ logger.debug(f"[AliceMemory] 阶段 | 详细信息...")
 |------|------|
 | `/compact [日期]` | 手动压缩（无参=Path A 周摘要，指定日期=Path B 日摘要） |
 | `/important [消息ID]` | 标记重要记忆 → L3 |
-| `/forget [记忆ID]` | 删除指定记忆 |
 | `/show_memory [查询]` | 搜索 L3 记忆 |
+| `/l3_merge` | 手动合并当前用户 L3 相似记忆 |
+| `/l3_stats` | 查看 L3 状态（总记忆数、当前阈值） |
+| `/forget [记忆ID]` | 删除指定记忆 |
 
 ## 合并迭代流程
 
