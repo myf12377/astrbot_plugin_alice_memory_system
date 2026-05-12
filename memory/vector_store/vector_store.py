@@ -604,8 +604,8 @@ class VectorStore:
     # P20：单用户合并逻辑，供 scheduler 和 /l3_merge 命令共用
     async def merge_similar_for_user(
         self, user_id: str, analyzer: Any, threshold: float,
-    ) -> int:
-        """贪心法合并用户 L3 相似记忆（P20 从 scheduler 提取）。
+    ) -> tuple[int, list[dict[str, Any]]]:
+        """贪心法合并用户 L3 相似记忆（P20+P21）。
 
         Args:
             user_id: 目标用户。
@@ -613,18 +613,19 @@ class VectorStore:
             threshold: 合并相似度阈值（l3_merge_similarity）。
 
         Returns:
-            合并的对数。
+            (合并对数, [{"old_ids": [...], "content": ..., "score": ...}, ...])
+            调用方用 merge_details 同步 JSON 存储。
         """
         memories = self.get_user_memories(user_id)
         if len(memories) < 2:
-            return 0
-        # 按 importance 降序：优先保留高价值记忆
+            return 0, []
         memories.sort(
             key=lambda m: m["metadata"].get("importance", 0),
             reverse=True,
         )
         consumed: set[str] = set()
         merged_count = 0
+        merge_details: list[dict[str, Any]] = []
 
         for m1 in memories:
             if m1["id"] in consumed:
@@ -648,13 +649,21 @@ class VectorStore:
                     ) + 0.5,
                     10.0,  # P19 上限
                 )
-                await self.merge_memories(m1["id"], s["id"], merged, new_score)
+                new_id, old_ids = await self.merge_memories(
+                    m1["id"], s["id"], merged, new_score,
+                )
+                merge_details.append({
+                    "old_ids": old_ids,
+                    "content": merged,
+                    "score": new_score,
+                    "new_vector_id": new_id,
+                })
                 consumed.add(m1["id"])
                 consumed.add(s["id"])
                 merged_count += 1
                 break
 
-        return merged_count
+        return merged_count, merge_details
 
     # ==================================================================
     # 相似度 & 合并（旧方法）
@@ -706,8 +715,8 @@ class VectorStore:
 
     async def merge_memories(
         self, vid1: str, vid2: str, merged_content: str, new_score: float,
-    ) -> str:
-        """合并两条记忆：删旧建新。
+    ) -> tuple[str, list[str]]:
+        """合并两条记忆：删旧建新（P21 返回旧 ID 供 JSON 同步）。
 
         Args:
             vid1, vid2: 被合并的两条旧 vector_id。
@@ -715,7 +724,7 @@ class VectorStore:
             new_score: 新分数 = max(s1, s2) + 0.5。
 
         Returns:
-            新 vector_id。
+            (新 vector_id, [被删除的旧 vector_id 列表])。
         """
         # 收集旧元数据
         meta1: dict[str, Any] = {}
@@ -754,7 +763,45 @@ class VectorStore:
             metadatas=[new_metadata],
             embeddings=[vector] if vector else None,
         )
-        return new_id
+        return new_id, [vid1, vid2]  # P21 返回旧 ID 供调用方同步 JSON
+
+    # P21：写入前去重 — 供 /important 和 L3 晋升使用
+    async def add_or_merge(
+        self, user_id: str, content: str, score: float,
+        analyzer: Any, merge_threshold: float,
+    ) -> dict[str, Any]:
+        """写入前去重：相似度高则合并，否则新增。
+
+        流程：嵌入新内容 → 查找相似记忆 → 有则先暂存再合并，无则直接存。
+
+        Returns:
+            {"action": "added"|"merged", "vector_id": str,
+             "merged_content": str, "new_score": float, "old_ids": [...]}
+        """
+        vectors = await self._call_embedding_func_async([content])
+        if not vectors:
+            vid = await self.add_memory(user_id, content, {"importance": score})
+            return {"action": "added", "vector_id": vid,
+                    "merged_content": content, "new_score": score, "old_ids": []}
+        similar = self.find_similar(user_id, vectors[0], merge_threshold)
+        if not similar:
+            vid = await self.add_memory(user_id, content, {"importance": score})
+            return {"action": "added", "vector_id": vid,
+                    "merged_content": content, "new_score": score, "old_ids": []}
+        # 有相似记忆 → 先暂存新内容，再与相似条目合并
+        best = similar[0]
+        temp_id = await self.add_memory(user_id, content, {"importance": score})
+        merged = await analyzer.merge_content(best["content"], content)
+        merged_content = merged if merged else content
+        new_score = min(
+            max(best["metadata"].get("importance", 0), score) + 0.5, 10.0,
+        )
+        new_id, old_ids = await self.merge_memories(
+            best["id"], temp_id, merged_content, new_score,
+        )
+        return {"action": "merged", "vector_id": new_id,
+                "merged_content": merged_content, "new_score": new_score,
+                "old_ids": old_ids}
 
     # ==================================================================
     # 工具

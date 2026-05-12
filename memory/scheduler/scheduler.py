@@ -254,9 +254,15 @@ class Scheduler:
         threshold = self._config.l3_merge_similarity
         try:
             for uid in self._identity_module.get_all_users():
-                merged = await self._vector_store.merge_similar_for_user(
+                merged, details = await self._vector_store.merge_similar_for_user(
                     uid, self._analyzer, threshold,
                 )
+                # P21 同步 JSON
+                for d in details:
+                    self._storage.replace_l3_memory(
+                        uid, d["old_ids"], d["content"],
+                        {"importance": d["score"], "vector_id": d["new_vector_id"]},
+                    )
                 if merged:
                     logger.info(
                         "[AliceMemory] L3 合并 | uid=%s... | 合并=%d 对",

@@ -371,18 +371,29 @@ class AliceMemoryPlugin(Star):
                         score, self.plugin_config.importance_threshold,
                     )
                     if score >= self.plugin_config.importance_threshold:
-                        vid = await self._vector_store.add_memory(
-                            user_id, content, {"importance": score},
+                        # P21 写入前去重
+                        result = await self._vector_store.add_or_merge(
+                            user_id, content, score, self._analyzer,
+                            self.plugin_config.l3_merge_similarity,
                         )
-                        # 双写: ChromaDB + JSON（防丢失、可转移）
-                        self._storage.add_l3_memory(
-                            user_id, content,
-                            {"importance": score, "vector_id": vid},
-                        )
-                        logger.info(
-                            "[AliceMemory] L3 晋升 | vid=%s | score=%d",
-                            vid[:8], score,
-                        )
+                        if result["action"] == "merged":
+                            self._storage.replace_l3_memory(
+                                user_id, result["old_ids"], result["merged_content"],
+                                {"importance": result["new_score"], "vector_id": result["vector_id"]},
+                            )
+                            logger.info(
+                                "[AliceMemory] L3 合并晋升 | vid=%s | score=%.1f",
+                                result["vector_id"][:8], result["new_score"],
+                            )
+                        else:
+                            self._storage.add_l3_memory(
+                                user_id, content,
+                                {"importance": score, "vector_id": result["vector_id"]},
+                            )
+                            logger.info(
+                                "[AliceMemory] L3 晋升 | vid=%s | score=%d",
+                                result["vector_id"][:8], score,
+                            )
                 except Exception as e:
                     # L3 晋升失败不应阻塞正常对话
                     logger.error("[AliceMemory] L3 晋升失败 | %s", e)
@@ -497,17 +508,27 @@ class AliceMemoryPlugin(Star):
 
         try:
             score = await self._analyzer.analyze(content)
-            vid = await self._vector_store.add_memory(
-                user_id, content, {"importance": score},
+            # P21 写入前去重：相似度高则合并
+            result = await self._vector_store.add_or_merge(
+                user_id, content, score, self._analyzer,
+                self.plugin_config.l3_merge_similarity,
             )
-            # 双写: ChromaDB + JSON
-            self._storage.add_l3_memory(
-                user_id, content, {"importance": score, "vector_id": vid},
-            )
-            yield event.plain_result(
-                f"[AliceMemory] 已存入 L3 | id={vid[:8]} | 重要性={score}/10"
-            )
-            logger.info("[AliceMemory] /important | vid=%s... | score=%d", vid[:8], score)
+            if result["action"] == "merged":
+                self._storage.replace_l3_memory(
+                    user_id, result["old_ids"], result["merged_content"],
+                    {"importance": result["new_score"], "vector_id": result["vector_id"]},
+                )
+                yield event.plain_result(
+                    f"[AliceMemory] 已合并到现有记忆 | id={result['vector_id'][:8]} | 分数={result['new_score']:.1f}"
+                )
+            else:
+                self._storage.add_l3_memory(
+                    user_id, content, {"importance": score, "vector_id": result["vector_id"]},
+                )
+                yield event.plain_result(
+                    f"[AliceMemory] 已存入 L3 | id={result['vector_id'][:8]} | 重要性={score}/10"
+                )
+            logger.info("[AliceMemory] /important | vid=%s... | score=%d", result["vector_id"][:8], score)
         except Exception as e:
             logger.error("[AliceMemory] /important 失败 | %s", e, exc_info=True)
             yield event.plain_result(f"[AliceMemory] 存入失败: {e}")
@@ -624,9 +645,15 @@ class AliceMemoryPlugin(Star):
 
         threshold = self.plugin_config.l3_merge_similarity
         try:
-            merged = await self._vector_store.merge_similar_for_user(
+            merged, details = await self._vector_store.merge_similar_for_user(
                 user_id, self._analyzer, threshold,
             )
+            # P21 同步 JSON
+            for d in details:
+                self._storage.replace_l3_memory(
+                    user_id, d["old_ids"], d["content"],
+                    {"importance": d["score"], "vector_id": d["new_vector_id"]},
+                )
             if merged:
                 yield event.plain_result(
                     f"[AliceMemory] L3 合并完成 | 合并={merged} 对"

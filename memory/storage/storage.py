@@ -578,6 +578,42 @@ class MemoryStorage:
             return True
         return False
 
+    # P21：合并替换 — merge_memories 同步 JSON 用
+    def replace_l3_memory(
+        self, user_id: str, old_vector_ids: list[str],
+        new_content: str, new_metadata: dict[str, Any],
+    ) -> str:
+        """合并替换 L3 记忆：删旧（按 vector_id 匹配），写入合并后新条目。
+
+        Args:
+            user_id: 用户标识。
+            old_vector_ids: 被合并的旧 ChromaDB vector_id 列表。
+            new_content: 合并后的新内容。
+            new_metadata: 新条目的元数据。
+
+        Returns:
+            新条目的 memory_id。
+        """
+        path = self._get_l3_path(user_id)
+        data = self._load_json(path)
+        # 按 vector_id 匹配删除旧条目
+        data = [
+            d for d in data
+            if d.get("metadata", {}).get("vector_id") not in old_vector_ids
+        ]
+        # 写入新条目
+        new_id = str(uuid.uuid4())
+        item = L3MemoryItem(
+            memory_id=new_id,
+            user_id=user_id,
+            content=new_content,
+            metadata=new_metadata,
+            timestamp=self._now_ts(),
+        )
+        data.append(item.to_dict())
+        self._save_json(path, data)
+        return new_id
+
     # ==================================================================
     # 工具
     # ==================================================================
