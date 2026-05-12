@@ -216,11 +216,7 @@ class DialogueCompressor:
         """
         if not text or len(text) < 10:
             return False
-        # LLM 捏造模板：太长且包含模板关键词
-        template_markers = ["模板", "时间范围", "待办事项", "下一步", "请核对"]
-        if len(text) > 300 and any(m in text for m in template_markers):
-            return False
-        # prompt 回显：全文检测
+        # prompt 回显/LLM 拒绝：全文检测
         echo_markers = [
             "请提供", "请根据", "请按照", "请输出", "请仔细",
             "请将以下", "请将以上", "以下包含",
