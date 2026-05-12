@@ -139,9 +139,14 @@ class PluginConfig(BaseModel):
         default=8, ge=0, le=10,
         description="重要性阈值，≥此值晋升 L3",
     )
-    l3_merge_similarity: float = Field(
+    # P19 拆分：检索阈值与合并阈值独立
+    l3_search_similarity: float = Field(
         default=0.4, ge=0.0, le=1.0,
-        description="向量相似度阈值（Qwen 推荐 0.35-0.5，ChromaDB 内置推荐 0.85-0.95）",
+        description="L3 检索相似度阈值（换模型后自动校准，可手动覆盖）",
+    )
+    l3_merge_similarity: float = Field(
+        default=0.75, ge=0.0, le=1.0,
+        description="L3 记忆合并相似度阈值（固定值，不受自校准影响）",
     )
     l3_search_count: int = Field(
         default=5, ge=1, le=20,

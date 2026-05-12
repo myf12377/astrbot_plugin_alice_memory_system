@@ -287,12 +287,13 @@ class Scheduler:
                         )
                         if not merged:
                             continue
-                        new_score = (
+                        new_score = min(
                             max(
                                 m1["metadata"].get("importance", 0),
                                 s["metadata"].get("importance", 0),
                             )
-                            + 0.5
+                            + 0.5,
+                            10.0,  # P19 上限，防止无限增长
                         )
                         await self._vector_store.merge_memories(
                             m1["id"], s["id"], merged, new_score,

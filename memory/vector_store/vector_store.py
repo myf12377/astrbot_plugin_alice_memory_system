@@ -282,14 +282,15 @@ class VectorStore:
         )
 
     def get_effective_threshold(self) -> float:
-        """获取当前生效的相似度阈值。
+        """获取当前生效的检索相似度阈值（P19 拆分后仅供搜索/注入使用）。
 
         优先级：用户手动覆盖（config≠默认0.4）→ 自校准值 → 默认0.4。
         供 context_injector / main.py 调用。
+        合并阈值使用独立字段 l3_merge_similarity，与此无关。
         """
         # 用户手动修改了 WebUI 配置 → 优先使用
-        if self._config.l3_merge_similarity != 0.4:
-            return self._config.l3_merge_similarity
+        if self._config.l3_search_similarity != 0.4:
+            return self._config.l3_search_similarity
         # 自校准值
         try:
             stored = self._collection.metadata.get("similarity_threshold", "")

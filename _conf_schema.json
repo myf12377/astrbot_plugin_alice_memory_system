@@ -107,11 +107,17 @@
     "default": 8,
     "hint": "范围 0-10。LLM 评定的重要性 ≥ 此值晋升 L3。较高=更精选，较低=更多记忆。"
   },
+  "l3_search_similarity": {
+    "type": "float",
+    "description": "L3 检索相似度阈值（可被自校准覆盖）",
+    "default": 0.4,
+    "hint": "换模型后自动校准。影响 /show_memory 过滤、L3 注入。手动修改此值可覆盖自校准结果。"
+  },
   "l3_merge_similarity": {
     "type": "float",
-    "description": "向量相似度阈值（可被自校准覆盖）",
-    "default": 0.4,
-    "hint": "范围 0.0-1.0。换模型后自动校准阈值（取两两相似度中位数）。手动修改此值可覆盖自校准结果。影响 /show_memory 过滤、L3 注入、记忆合并。"
+    "description": "L3 记忆合并相似度阈值",
+    "default": 0.75,
+    "hint": "范围 0.0-1.0。两条记忆相似度 ≥ 此值触发 LLM 合并。建议 0.7-0.85。不受自校准影响，需手动调整。"
   },
   "l3_search_count": {
     "type": "int",
