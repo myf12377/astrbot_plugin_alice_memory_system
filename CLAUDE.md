@@ -2,7 +2,7 @@
 
 `astrbot_alice_memory_modul` — 三层记忆存储系统（L1原始对话 / L2双路中期记忆 / L3长期向量记忆）。
 
-> **v2.3 P20 完成** — 完整 L3 功能：延迟解析 + 双写 + cosine + 维度检测 + 自校准 + 检索/合并阈值分离 + /l3_merge 命令，86 项测试通过。
+> **v3.0.0** — 三层记忆系统完整实现。全部功能就绪：L1 轮次滑窗 + L2 双路径压缩 + L3 向量记忆完整链路（外部嵌入/自校准/双写/去重合并）。主动层对接接口就绪（6 property + 4 get_*_context）。86 项测试通过。
 
 ## AI 行为规则
 
@@ -91,6 +91,36 @@ PluginConfig (0) → Identity(1) / Storage(1) / VectorStore(1) / Analyzer(1)
 - L2 Path A → `extra_user_content_parts`（标记 `[周摘要]`，覆盖式）
 - L2 Path B → `extra_user_content_parts`（标记 `[L2记忆]`，覆盖式）
 - L3 → `extra_user_content_parts`（标记 `[L3记忆]`，覆盖式）
+
+## 主动层对接
+
+记忆层是"记忆仓库"，主动层是"对话编排者"。通过 `context.get_all_stars()` 获取实例，调用公开 API：
+
+```python
+for star in context.get_all_stars():
+    if star.name == "astrbot_alice_memory_tier":
+        plugin = star.star_cls
+
+# 6 个 @property（只读访问）
+plugin.storage       # L1/L2/L3 JSON 存储读写
+plugin.vector_store  # L3 向量检索
+plugin.identity      # 跨平台用户身份映射
+plugin.injector      # 记忆上下文注入器
+plugin.compressor    # L2 压缩器
+plugin.analyzer      # LLM 重要性分析
+
+# 4 个纯读取方法（不影响注入管线）
+l1 = plugin.injector.get_l1_context(uid)
+l2a = plugin.injector.get_l2_path_a_context(uid)
+l2b = plugin.injector.get_l2_path_b_context(uid)
+l3 = await plugin.injector.get_l3_context(uid, query)
+
+# 写入
+plugin.storage.append_dialogue(uid, "user", content)
+results = await plugin.vector_store.search(uid, query)
+```
+
+切换方式：WebUI `hook_enabled=false` → 记忆层静默钩子，主动层全权接管。
 
 ## 钩子系统
 

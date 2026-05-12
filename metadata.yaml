@@ -1,20 +1,35 @@
 name: astrbot_alice_memory_tier
 display_name: Alice Memory
 desc: |
-  Alice 三层记忆系统 - 基于 LLM 的智能记忆管理插件 (v2.0.1)
+  Alice 三层记忆系统 v3.0 — 类人记忆管理插件，为主动层提供完整记忆后端。
 
   记忆层次:
-  - L1 原始对话: 最近 N 轮全量注入（按日期分组），磁盘保存 200 轮
-  - L2 中期记忆: 周摘要 + 非本周日摘要，去重合并注入
-  - L3 长期向量记忆: 重要性评估 + 语义检索 + 衰减模型（艾宾浩斯遗忘曲线）
+  - L1 短期记忆: 轮次滑窗（200轮保留），按日期分组注入上下文
+  - L2 中期记忆: Path A 渐进周摘要 + Path B 日摘要，双路径自动压缩
+  - L3 长期记忆: 外部 EmbeddingProvider 向量嵌入 + 余弦相似度检索 + 艾宾浩斯衰减模型
 
-  功能特性:
-  - 三管线注入: L1（全量分组）/ L2（去重合并）/ L3（按需检索）
-  - 自然遗忘曲线: 衰减公式 effective = importance × 0.995^days + 访问加成
-  - 手动压缩: /compact 命令支持 Path A/B 压缩
-  - L2 日摘要自动清理: 02:00 定时清理 7 天前日摘要
+  核心特性:
+  - 三管线独立注入: L1 → contexts（按日期分组）/ L2 → extra（周+日分层）/ L3 → extra（语义检索）
+  - 嵌入模型自由切换: 支持 auto / 自定义模型名，维度变化自动检测+重建（JSON 备份防丢失）
+  - 相似度自校准: 换模型后自动计算建议阈值，检索/合并阈值独立配置
+  - 写入去重: /important 和 L3 晋升前自动检测相似记忆并合并
+  - 自然遗忘: 衰减公式 effective = importance × 0.995^days + 访问加成
+  - 双写防丢失: ChromaDB 向量库 + l3/{uid}.json 持久化备份
+
+  主动层对接:
+  - 6 个 @property（storage / vector_store / identity / injector / compressor / analyzer）
+  - 4 个 get_*_context() 纯读取方法（不影响注入管线）
+  - hook_enabled=false → 记忆层静默钩子，主动层全权接管
+
+  命令:
+  - /compact [日期] — 手动压缩
+  - /important <内容> — 标记重要记忆
+  - /show_memory <查询> — 语义搜索 L3
+  - /l3_merge — 手动合并当前用户 L3 记忆
+  - /l3_stats — 查看 L3 状态
+  - /forget <ID> — 删除 L3 记忆
 author: Alice
-version: 2.0.1
+version: 3.0.0
 astrbot_version: ">=4.16"
 support_platforms:
   - qq_official
