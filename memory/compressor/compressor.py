@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from astrbot.api import logger
+
 from ..utils import parse_score
 
 if TYPE_CHECKING:
@@ -57,9 +59,12 @@ class DialogueCompressor:
         """
         dialogues = self._get_dialogues(user_id, date)
         if not dialogues:
+            logger.info("[AliceMemory] Path B 跳过 | date=%s | 无对话", date)
             return None
 
         content = self._format_dialogues(dialogues)
+        logger.info("[AliceMemory] Path B 压缩 | date=%s | 对话=%d条 | 字数=%d",
+                    date, len(dialogues), len(content))
         if hidden is None:
             hidden = self._config.l2_summary_hidden
 
