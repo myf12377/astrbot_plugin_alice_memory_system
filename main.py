@@ -694,9 +694,14 @@ class AliceMemoryPlugin(Star):
                 )
                 for m in json_memories:
                     try:
+                        # ChromaDB metadata 仅支持 str/int/float/bool，过滤 list/dict/None
+                        clean_meta = {
+                            k: v for k, v in m.metadata.items()
+                            if isinstance(v, (str, int, float, bool))
+                        }
                         await self._vector_store.add_memory(
                             uid, m.content,
-                            {**m.metadata, "vector_id": m.memory_id},
+                            {**clean_meta, "vector_id": m.memory_id},
                         )
                     except RuntimeError:
                         # Provider 仍未就绪，跳过本次恢复（下次 L3 操作会触发迁移）
