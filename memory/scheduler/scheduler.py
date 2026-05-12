@@ -241,14 +241,9 @@ class Scheduler:
     # ==================================================================
 
     async def _l3_merge(self) -> None:
-        """贪心法合并 L3 相似记忆（P8 新增，cron 由 _days_to_cron 动态决定）。
+        """定时合并 L3 相似记忆（P20：核心逻辑已移至 VectorStore）。
 
-        算法:
-          1. 获取用户全部 L3 记忆，按 importance 降序（优先保留高价值）
-          2. 对每条记忆，用 ChromaDB 语义搜索找相似记忆
-          3. 相似度 ≥ l3_merge_similarity → LLM 合并为一条
-          4. 新分数 = max(s1, s2) + 0.5（合并后的记忆更重要）
-          5. 已消费的记忆不再参与后续合并（consumed set 去重）
+        遍历全部用户，调用 merge_similar_for_user()。
         """
         logger.info(
             "[AliceMemory] 定时触发 | L3 合并 (interval=%dd)",
@@ -259,54 +254,13 @@ class Scheduler:
         threshold = self._config.l3_merge_similarity
         try:
             for uid in self._identity_module.get_all_users():
-                memories = self._vector_store.get_user_memories(uid)
-                if len(memories) < 2:
-                    continue
-                memories.sort(
-                    key=lambda m: m["metadata"].get("importance", 0),
-                    reverse=True,
+                merged = await self._vector_store.merge_similar_for_user(
+                    uid, self._analyzer, threshold,
                 )
-                consumed: set[str] = set()
-                merged_count = 0
-
-                for m1 in memories:
-                    if m1["id"] in consumed:
-                        continue
-                    # 用第一条记忆的 content 搜索相似记忆
-                    similar = await self._vector_store.search(
-                        uid, m1["content"], top_k=5
-                    )
-                    for s in similar:
-                        if s["id"] in consumed or s["id"] == m1["id"]:
-                            continue
-                        distance = s.get("distance", 1.0)
-                        if 1.0 - distance < threshold:
-                            continue
-                        merged = await self._analyzer.merge_content(
-                            m1["content"], s["content"]
-                        )
-                        if not merged:
-                            continue
-                        new_score = min(
-                            max(
-                                m1["metadata"].get("importance", 0),
-                                s["metadata"].get("importance", 0),
-                            )
-                            + 0.5,
-                            10.0,  # P19 上限，防止无限增长
-                        )
-                        await self._vector_store.merge_memories(
-                            m1["id"], s["id"], merged, new_score,
-                        )
-                        consumed.add(m1["id"])
-                        consumed.add(s["id"])
-                        merged_count += 1
-                        break
-
-                if merged_count:
+                if merged:
                     logger.info(
                         "[AliceMemory] L3 合并 | uid=%s... | 合并=%d 对",
-                        uid[:8], merged_count,
+                        uid[:8], merged,
                     )
         except Exception:
             logger.error("[AliceMemory] L3 合并异常", exc_info=True)

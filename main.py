@@ -608,6 +608,35 @@ class AliceMemoryPlugin(Star):
             logger.error("[AliceMemory] /l3_stats 失败 | %s", e, exc_info=True)
             yield event.plain_result(f"[AliceMemory] 状态查询失败: {e}")
 
+    @filter.command("l3_merge")
+    async def cmd_l3_merge(self, event: AstrMessageEvent) -> None:
+        """手动合并当前用户 L3 相似记忆（P20 新增）。"""
+        platform = event.get_platform_name()
+        platform_user_id = event.get_sender_id()
+        user_id = self._identity.get_user_id(platform, platform_user_id)
+        if not user_id:
+            yield event.plain_result("[AliceMemory] 未能识别用户身份")
+            return
+
+        if not self._vector_store or not self._analyzer:
+            yield event.plain_result("[AliceMemory] L3 模块未就绪")
+            return
+
+        threshold = self.plugin_config.l3_merge_similarity
+        try:
+            merged = await self._vector_store.merge_similar_for_user(
+                user_id, self._analyzer, threshold,
+            )
+            if merged:
+                yield event.plain_result(
+                    f"[AliceMemory] L3 合并完成 | 合并={merged} 对"
+                )
+            else:
+                yield event.plain_result("[AliceMemory] 无可合并记忆（需要 ≥2 条且相似度 ≥%.2f）" % threshold)
+        except Exception as e:
+            logger.error("[AliceMemory] /l3_merge 失败 | %s", e, exc_info=True)
+            yield event.plain_result(f"[AliceMemory] 合并失败: {e}")
+
     # =========================================================================
     # 内部方法
     # =========================================================================

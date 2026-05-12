@@ -601,6 +601,65 @@ class VectorStore:
     # 相似度 & 合并
     # ==================================================================
 
+    # P20：单用户合并逻辑，供 scheduler 和 /l3_merge 命令共用
+    async def merge_similar_for_user(
+        self, user_id: str, analyzer: Any, threshold: float,
+    ) -> int:
+        """贪心法合并用户 L3 相似记忆（P20 从 scheduler 提取）。
+
+        Args:
+            user_id: 目标用户。
+            analyzer: ImportanceAnalyzer 实例（提供 merge_content LLM 调用）。
+            threshold: 合并相似度阈值（l3_merge_similarity）。
+
+        Returns:
+            合并的对数。
+        """
+        memories = self.get_user_memories(user_id)
+        if len(memories) < 2:
+            return 0
+        # 按 importance 降序：优先保留高价值记忆
+        memories.sort(
+            key=lambda m: m["metadata"].get("importance", 0),
+            reverse=True,
+        )
+        consumed: set[str] = set()
+        merged_count = 0
+
+        for m1 in memories:
+            if m1["id"] in consumed:
+                continue
+            similar = await self.search(user_id, m1["content"], top_k=5)
+            for s in similar:
+                if s["id"] in consumed or s["id"] == m1["id"]:
+                    continue
+                distance = s.get("distance", 1.0)
+                if 1.0 - distance < threshold:
+                    continue
+                merged = await analyzer.merge_content(
+                    m1["content"], s["content"],
+                )
+                if not merged:
+                    continue
+                new_score = min(
+                    max(
+                        m1["metadata"].get("importance", 0),
+                        s["metadata"].get("importance", 0),
+                    ) + 0.5,
+                    10.0,  # P19 上限
+                )
+                await self.merge_memories(m1["id"], s["id"], merged, new_score)
+                consumed.add(m1["id"])
+                consumed.add(s["id"])
+                merged_count += 1
+                break
+
+        return merged_count
+
+    # ==================================================================
+    # 相似度 & 合并（旧方法）
+    # ==================================================================
+
     def find_similar(
         self, user_id: str, embedding: list[float], threshold: float,
     ) -> list[dict[str, Any]]:
