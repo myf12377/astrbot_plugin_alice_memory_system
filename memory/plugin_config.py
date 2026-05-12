@@ -231,5 +231,16 @@ class PluginConfig(BaseModel):
         return self.model_dump(mode="json")
 
     def model_post_init(self, __context: Any) -> None:
-        """Pydantic 初始化后钩子：确保数据目录存在。"""
+        """Pydantic 初始化后钩子：确保数据目录存在 + 校验模板完整性。"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        # P22: 校验压缩模板是否包含必要的占位符，防止静默失败
+        from astrbot.api import logger as _logger
+        if "{content}" not in self.l2_compress_prompt_b:
+            _logger.warning(
+                "[AliceMemory] l2_compress_prompt_b 缺少 {content} 占位符，Path B 压缩将失败"
+            )
+        for ph in ("{weekly_summary}", "{today_dialogues}", "{daily_summaries}"):
+            if ph not in self.l2_compress_prompt_a:
+                _logger.warning(
+                    "[AliceMemory] l2_compress_prompt_a 缺少 %s 占位符，Path A 压缩将失败", ph
+                )
