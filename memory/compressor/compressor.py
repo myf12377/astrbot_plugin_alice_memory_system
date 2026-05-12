@@ -198,16 +198,27 @@ class DialogueCompressor:
 
     @staticmethod
     def _looks_valid(text: str) -> bool:
-        """校验 LLM 返回是否为有效摘要（P4 回移植）。
+        """校验 LLM 返回是否为有效摘要（P4 回移植 + P22 增强）。
 
-        某些 LLM 可能回显 prompt 模板而非生成摘要。
-        检测: 文本太短(<5字符) 或 开头包含 prompt 指令关键词 → 无效。
+        检测无效模式：
+        - 太短（<10字符）
+        - 太长且包含模板特征（>300字符 + 包含"模板"/"时间范围"等）→ LLM 捏造
+        - 包含 prompt 回显特征（全文检测，不限于开头）
         """
-        if not text or len(text) < 5:
+        if not text or len(text) < 10:
             return False
-        prompt_markers = ["请提供", "请根据", "请按照", "请输出", "请仔细"]
-        for marker in prompt_markers:
-            if marker in text[:50]:
+        # LLM 捏造模板：太长且包含模板关键词
+        template_markers = ["模板", "时间范围", "待办事项", "下一步", "请核对"]
+        if len(text) > 300 and any(m in text for m in template_markers):
+            return False
+        # prompt 回显：全文检测
+        echo_markers = [
+            "请提供", "请根据", "请按照", "请输出", "请仔细",
+            "请将以下", "请将以上", "以下包含",
+            "昨日对话",  # LLM 问"请提供昨日对话"
+        ]
+        for marker in echo_markers:
+            if marker in text:
                 return False
         return True
 
